@@ -1,0 +1,36 @@
+{
+    "botPrivateKey": "1111111111111111111111111111111111111111111111111111111111111111",
+    "relays": [
+        "nostr.pleb.network",
+        "nostr-pub.wellorder.net",
+        "nostr.mom",
+        "relay.nostr.bg"
+    ],
+    "referencedEventId": "nostr:nevent1qqs85ryhle3xrglp80jvdp57wm9l4g66n7htrg93dev33n7j00v5vrspz4mhxue69uhhyetvv9ujumn0wd68ytnzvuhsygzschycenp3e203aat223a0cn95sx2lu4sr6nmcwj3zrkuktpnu3cpsgqqqqqqsyzweeu",
+    "excludePubkeys": [
+    ],
+    "zapMessage": "Thanks for participating in InkblotArt!",
+    "zapConditions": [
+        {
+            "requiredPhrase.comment": "The users event should include this phrase to be paid the amount",
+            "requiredPhrase": "#InkblotArt",
+            "requiredLength.comment": "The comment in the users event must be at least this long",
+            "requiredLength": 20,
+            "zapAmount.comment": "The amount of sats to zap the user",
+            "zapAmount": 20
+        },
+        {
+            "requiredPhrase": null,
+            "requiredLength": 15,
+            "zapAmount": 10
+        }
+    ],
+    "lndServer": {
+        "address": "127.0.0.1",
+        "port": "10080",
+        "macaroon": "0201036C.....",
+        "paymentTimeout": 30,
+        "feeLimit": 5
+    }
+}
+
