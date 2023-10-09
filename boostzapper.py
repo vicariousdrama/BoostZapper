@@ -7,6 +7,7 @@ from nostr.event import Event, EventKind
 from nostr.filter import Filter, Filters
 from nostr.message_type import ClientMessageType
 from nostr.relay_manager import RelayManager
+import base64
 import bech32
 import json
 import logging
@@ -18,10 +19,27 @@ import sys
 import time
 import urllib.parse
 
+# Crude command line parsing. p is a parameter name for which
+# a value is saught. If p is found, then the next arg is the
+# value for p.
+def getCommandArg(p):
+    b = False
+    v = None
+    l = str(p).lower()
+    for a in sys.argv:
+        if b:
+            v = a
+            b = False
+        elif f"--{l}" == str(a).lower():
+            b = True
+    return v
+
 def getConfig(filename):
+    c = getCommandArg("config") # allow overriding default filename
+    if c is not None: filename = c
     logger.debug(f"Loading config from {filename}")
     if not exists(filename):
-        logger.warn(f"Config file does not exist at {filename}")
+        logger.warning(f"Config file does not exist at {filename}")
         return {}
     with open(filename) as f:
         return(json.load(f))
@@ -42,25 +60,14 @@ def validateConfig(config):
         logger.error("Configuration is missing lndServer")
         hasErrors = True
     else:
-        if "address" not in config["lndServer"]:
-            logger.error("Configuration file is missing address in lndServer")
-            hasErrors = True
-        if "port" not in config["lndServer"]:
-            logger.error("Configuration file is missing port in lndServer")
-            hasErrors = True
-        if "macaroon" not in config["lndServer"]:
-            logger.error("Configuration file is missing macaroon in lndServer")
-            hasErrors = True
-        if "paymentTimeout" not in config["lndServer"]:
-            logger.error("Configuration file is missing paymentTimeout in lndServer")
-            hasErrors = True
-        if "feeLimit" not in config["lndServer"]:
-            logger.error("Configuration file is missing feeLimit in lndServer")
-            hasErrors = True
+        for k in ("address","port","macaroon","paymentTimeout","feeLimit"):
+            if k not in config["lndServer"]:
+                logger.error(f"Configuration file is missing {k} in lndServer")
+                hasErrors = True
     if hasErrors: quit()
 
 def getPubkeyListFilename(listName, eventId):
-    return f"data/{eventId}.{listName}.json"
+    return f"{dataFolder}{eventId}.{listName}.json"
 
 def loadPubkeys(listName, eventId):
     filename = getPubkeyListFilename(listName, eventId)
@@ -73,20 +80,31 @@ def savePubkeys(listName, eventId, d):
     with open(filename, "w") as f:
         f.write(json.dumps(obj=d,indent=2))
 
-def loadLud16Cache():
-    filename = "data/lud16cache.json"
+def listtodict(o):
+    if type(o) is dict: return o
+    if type(o) is list:
+        d = {}
+        for v in o:
+            d[v] = {}
+        return d
+
+def getPubkey2LightningCacheFilename():
+    return f"{dataFolder}lightningIdcache.json"
+
+def loadPubkey2LightningCache():
+    filename = getPubkey2LightningCacheFilename()
     if not exists(filename): return {}
     with open(filename) as f:
         return(json.load(f))
 
-def saveLud16Cache(d):
-    filename = "data/lud16cache.json"
+def savePubkey2LightningCache(d):
+    filename = getPubkey2LightningCacheFilename()
     with open(filename, "w") as f:
         f.write(json.dumps(obj=d,indent=2))
 
 def getNostrRelays(d, k):
     if k in d: return d[k]
-    logger.warn("Using default relays as none were defined")
+    logger.warning("Using default relays as none were defined")
     return ["nostr.pleb.network",
             "nostr-pub.wellorder.net",
             "nostr.mom",
@@ -94,10 +112,14 @@ def getNostrRelays(d, k):
             ]
 
 def getZapMessage(d, k):
+    c = getCommandArg("zapMessage") # allow overriding config from args
+    if c is not None: return c
     if k in d: return d[k]
     return "Zap!"
 
 def getEventId(d, k):
+    c = getCommandArg("referencedEventId") # allow overriding config from args
+    if c is not None: return c
     if k in d: return d[k]
     logger.error(f"Required field {k} not found. Check configuration")
     quit()
@@ -117,18 +139,18 @@ def normalizePubkeys(d):
 
 def getPrivateKey(d, k):
     if k not in d:
-        logger.warn(f"{k} not defined. A new one will be created")
+        logger.warning(f"{k} not defined. A new one will be created")
         return PrivateKey() # generate new each time script run
     v = d[k]
     if v == None:
-        logger.warn(f"{k} is empty. A new one will be created")
+        logger.warning(f"{k} is empty. A new one will be created")
         return PrivateKey() # generate new each time script run
     if len(v) == 64: # assumes in hex format
         raw_secret = bytes.fromhex(v)
         return PrivateKey(raw_secret=raw_secret)
     if str(v).startswith("nsec"): # in user friendly nsec bech32
         return PrivateKey().from_nsec(v)
-    logger.warn(f"{k} is not in nsec or hex format. A new one will be created")
+    logger.warning(f"{k} is not in nsec or hex format. A new one will be created")
     return PrivateKey()
 
 def isValidSignature(event):
@@ -148,7 +170,7 @@ def getEventsOfEvent(eventId, relays):
     # connect to relays
     relay_manager = RelayManager()
     for nostrRelay in relays:
-        relay_manager.add_relay(f"wss://{nostrRelay}")
+        relay_manager.add_relay(nostrRelay)
     relay_manager.add_subscription(subscription_id, filters)
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
     time.sleep(1.25) # allow the connections to open
@@ -165,8 +187,8 @@ def getEventsOfEvent(eventId, relays):
     # return them
     return matchingEvents
 
-def lookupLud16ForPubkey(userPubkey):
-    lud16 = None
+def getLightningIdForPubkey(userPubkey):
+    lightningId = None
     # filter setup
     filters = Filters([Filter(kinds=[EventKind.SET_METADATA],authors=[userPubkey])])
     t=int(time.time())
@@ -176,7 +198,7 @@ def lookupLud16ForPubkey(userPubkey):
     # connect to relays
     relay_manager = RelayManager()
     for nostrRelay in relays:
-        relay_manager.add_relay(f"wss://{nostrRelay}")
+        relay_manager.add_relay(nostrRelay)
     relay_manager.add_subscription(subscription_id, filters)
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
     time.sleep(1.25) # allow the connections to open
@@ -187,7 +209,7 @@ def lookupLud16ForPubkey(userPubkey):
     # look over returned events
     while relay_manager.message_pool.has_events():
         event_msg = relay_manager.message_pool.get_event()
-        if lud16 is not None: continue
+        if lightningId is not None: continue
         try:
             ec = json.loads(event_msg.event.content)
         except Exception as err:
@@ -195,12 +217,12 @@ def lookupLud16ForPubkey(userPubkey):
         if not isValidSignature(event_msg.event): 
             continue
         if "lud16" in ec and ec["lud16"] is not None: 
-            lud16 = ec["lud16"]
+            lightningId = ec["lud16"]
     relay_manager.close_connections()
-    return lud16
+    return lightningId
 
 def gettimeouts():
-    return (5,30)
+    return (5,30) # connect, read in seconds  TODO: make configurable?
 
 def gettorproxies():
     # with tor service installed, default port is 9050
@@ -238,7 +260,7 @@ def makeZapRequest(satsToZap, zapMessage, recipientPubkey, eventId, bech32lnurl)
     global relays
     amountMillisatoshi = satsToZap*1000
     zapTags = []
-    zapTags.append(["relays", relays])
+    zapTags.append(["relays"].extend(relays))
     zapTags.append(["amount", str(amountMillisatoshi)])
     zapTags.append(["lnurl", bech32lnurl])
     zapTags.append(["p",recipientPubkey])
@@ -247,10 +269,22 @@ def makeZapRequest(satsToZap, zapMessage, recipientPubkey, eventId, bech32lnurl)
     botKey.sign_event(zapEvent)
     return zapEvent
 
-def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
-    jd = zapRequest.to_message()
-    jd = jd[10:len(jd)-1]       # removes ["EVENT", ] envelope
+def getEncodedZapRequest(zapRequest):
+    o = {
+            "id": zapRequest.id,
+            "pubkey": zapRequest.public_key,
+            "created_at": zapRequest.created_at,
+            "kind": zapRequest.kind,
+            "tags": zapRequest.tags,
+            "content": zapRequest.content,
+            "sig": zapRequest.signature,
+        }
+    jd = json.dumps(o)
     encoded = urllib.parse.quote(jd)
+    return encoded
+
+def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
+    encoded = getEncodedZapRequest(zapRequest)
     amountMillisatoshi = satsToZap*1000
     useTor = False
     if ".onion" in callback: useTor = True
@@ -259,7 +293,7 @@ def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
     else:
         url = f"{callback}?"
     url = f"{url}amount={amountMillisatoshi}&nostr={encoded}&lnurl={bech32lnurl}"
-    logger.debug(f"zap request url: {url}")
+    #logger.debug(f"zap request url: {url}")    # for debugging relays
     j = geturl(useTor, url)
     return j
 
@@ -268,7 +302,7 @@ def isValidInvoiceResponse(invoiceResponse):
         if invoiceResponse["status"] == "ERROR":
             errReason = "unreported reason"
             if "reason" in invoiceResponse: errReason = invoiceResponse["reason"]
-            logger.warn(f"Invoice request error: {errReason}")
+            logger.warning(f"Invoice request error: {errReason}")
             return False
     if "pr" not in invoiceResponse: return False
     return True
@@ -287,15 +321,15 @@ def getDecodedInvoice(paymentRequest, lndServer):
 def isValidInvoice(decodedInvoice, satsToZap):
     amountMillisatoshi = satsToZap*1000
     if not all(k in decodedInvoice for k in ("num_satoshis","num_msat")): 
-        logger.warn(f"Invoice did not set amount")
+        logger.warning(f"Invoice did not set amount")
         return False
     num_satoshis = int(decodedInvoice["num_satoshis"])
     if num_satoshis != satsToZap:
-        logger.warn(f"Invoice amount ({num_satoshis}) does not match requested amount ({satsToZap}) to zap")
+        logger.warning(f"Invoice amount ({num_satoshis}) does not match requested amount ({satsToZap}) to zap")
         return False
     num_msat = int(decodedInvoice["num_msat"])
     if num_msat != amountMillisatoshi:
-        logger.warn(f"Invoice amount of msats ({num_msat}) does not match requested amount ({amountMillisatoshi}) to zap")
+        logger.warning(f"Invoice amount of msats ({num_msat}) does not match requested amount ({amountMillisatoshi}) to zap")
         return False
     return True
 
@@ -314,50 +348,148 @@ def payInvoice(paymentRequest, lndServer):
     proxies = gettorproxies() if ".onion" in serverAddress else {}
     timeout = gettimeouts()
     requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
-    resultStatus = "UNKNOWN"
+    resultStatus = "UNKNOWN1"
     resultFeeMSat = 0
     headers = {"Grpc-Metadata-macaroon": lndServer["macaroon"]}
     headers["Connection"] = "close"
+    json_response = None
+    payment_hash = None
     r = requests.post(url=url,stream=True,data=json.dumps(lndPostData),timeout=timeout,proxies=proxies,headers=headers,verify=False)
     try:
         for raw_response in r.iter_lines():
             json_response = json.loads(raw_response)
-            if "result" not in json_response:
-                logger.warn(f" - unexpected stream response format")
-                logger.warn(f"   {json_response}")
-            else:
-                newStatus = resultStatus
-                if "status" in json_response["result"]:
-                    newStatus = json_response["result"]["status"]
-                if "fee_msat" in json_response["result"]:
-                    resultFeeMSat = int(json_response["result"]["fee_msat"])
-                if newStatus != resultStatus:
-                    resultStatus = newStatus
-                    if resultStatus == "SUCCEEDED":
-                        logger.info(f" - {resultStatus}, fee paid: {resultFeeMSat} msat")
-                    elif resultStatus == "FAILED":
-                        failureReason = "unknown failure reason"
-                        if "failure_reason" in json_response["result"]:
-                            failureReason = json_response["result"]["failure_reason"]
-                        logger.warn(f" - {resultStatus} : {failureReason}")
-                    elif resultStatus == "IN_FLIGHT":
-                        logger.debug(f" - {resultStatus}")
-                    else:
-                        logger.info(f" - {resultStatus}")
-                        logger.info(json_response)
-    except ReadTimeoutError as rte:
+            if "result" in json_response: json_response = json_response["result"]
+            newStatus = resultStatus
+            if "status" in json_response:
+                newStatus = json_response["status"]
+            if "fee_msat" in json_response:
+                resultFeeMSat = int(json_response["fee_msat"])
+            if "payment_hash" in json_response:
+                payment_hash = json_response["payment_hash"]
+            if newStatus != resultStatus:
+                resultStatus = newStatus
+                if resultStatus == "SUCCEEDED":
+                    logger.info(f" - {resultStatus}, routing fee paid: {resultFeeMSat} msat")
+                elif resultStatus == "FAILED":
+                    failureReason = "unknown failure reason"
+                    if "failure_reason" in json_response:
+                        failureReason = json_response["failure_reason"]
+                    logger.warning(f" - {resultStatus} : {failureReason}")
+                elif resultStatus == "IN_FLIGHT":
+                    logger.debug(f" - {resultStatus}")
+                else:
+                    logger.info(f" - {resultStatus}")
+                    logger.info(json_response)
+    except Exception as rte: # (ConnectionError, TimeoutError, ReadTimeoutError) as rte:
         try:
             r.close()
         except Exception as e:
-            pass
+            logger.warning("Error closing connection after exception in payInvoice")
+        if json_response is not None: logger.debug(json_response)
+        return "TIMEOUT", (feeLimit * 1000), payment_hash
+    r.close()
+    return resultStatus, resultFeeMSat, payment_hash
+
+def trackPayment(paymentHash, lndServer):
+    logger.info(f"Tracking payment with hash {paymentHash}")
+    feeLimit = lndServer["feeLimit"]
+    paymentTimeout = lndServer["paymentTimeout"]
+    serverAddress = lndServer["address"]
+    serverPort = lndServer["port"]
+    base64paymentHash = base64.b64encode(bytes.fromhex(paymentHash))
+    base64paymentHash = urllib.parse.quote(base64paymentHash)
+    lndCallSuffix = f"/v2/router/track/{base64paymentHash}"
+    url = f"https://{serverAddress}:{serverPort}{lndCallSuffix}"
+    proxies = gettorproxies() if ".onion" in serverAddress else {}
+    timeout = gettimeouts()
+    requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+    resultStatus = "UNKNOWN2"
+    resultFeeMSat = 0
+    headers = {"Grpc-Metadata-macaroon": lndServer["macaroon"]}
+    headers["Connection"] = "close"
+    r = requests.get(url=url,stream=True,timeout=timeout,proxies=proxies,headers=headers,verify=False)
+    try:
+        for raw_response in r.iter_lines():
+            logger.debug(f"- line received from server: {raw_response}")
+            json_response = json.loads(raw_response)
+            if "result" in json_response: 
+                logger.debug("- data nested in result, promoting inner content")
+                json_response = json_response["result"]
+            if "message" in json_response:
+                message = json_response["message"]
+                logger.info(f"- {message}")
+                if "Not Found" in message:
+                    newStatus = "NOTFOUND"
+            newStatus = resultStatus
+            if "status" in json_response:
+                newStatus = json_response["status"]
+            else:
+                logger.warning("- status not found")
+            if "fee_msat" in json_response:
+                resultFeeMSat = int(json_response["fee_msat"])
+            else:
+                logger.warning("- fee_msat not found")
+            if newStatus != resultStatus:
+                resultStatus = newStatus
+                if resultStatus == "SUCCEEDED":
+                    logger.info(f" - {resultStatus}, routing fee paid: {resultFeeMSat} msat")
+                elif resultStatus == "FAILED":
+                    failureReason = "unknown failure reason"
+                    if "failure_reason" in json_response:
+                        failureReason = json_response["failure_reason"]
+                    logger.warning(f" - {resultStatus} : {failureReason}")
+                elif resultStatus == "IN_FLIGHT":
+                    logger.debug(f" - {resultStatus}")
+                else:
+                    logger.info(f" - {resultStatus}")
+                    logger.info(json_response)
+    except Exception as rte: # (ConnectionError, TimeoutError, ReadTimeoutError) as rte:
+        try:
+            r.close()
+        except Exception as e:
+            logger.warning("Error closing connection after exception in trackPayment")
+        if json_response is not None: logger.debug(json_response)
         return "TIMEOUT", (feeLimit * 1000)
     r.close()
     return resultStatus, resultFeeMSat
 
+def recheckTimedout(d, lndServer):
+    global statusCounts
+    adjustedCount = 0
+    reducedFees = 0
+    for k in d.keys():
+        s = d[k]
+        if "payment_status" not in s: continue
+        ostatus = s["payment_status"]
+        if ostatus not in ("TIMEOUT","UNKNOWN1"): continue
+        if "payment_hash" not in s: continue
+        if adjustedCount == 0: logLine()
+        ph = s["payment_hash"]
+        f = 0
+        if "fee_msat" in s: f = s["fee_msat"]
+        paymentStatus, feeMSat = trackPayment(ph, lndServer)
+        if paymentStatus is None: continue
+        if paymentStatus == "TIMEOUT": continue
+        adjustedCount += 1
+        d[k]["payment_status"] = paymentStatus
+        d[k]["fee_msat"] = feeMSat
+        reducedFees += (f - feeMSat)
+        if paymentStatus in statusCounts:
+            statusCounts[paymentStatus] = statusCounts[paymentStatus] + 1
+        else:
+            statusCounts[paymentStatus] = 1
+        statusCounts[ostatus] = statusCounts[ostatus] - 1
+        if statusCounts[ostatus] == 0:
+            del statusCounts[ostatus]
+
+    return d, adjustedCount, reducedFees
+
+def logLine():
+    logger.info("-" * 60)
 
 # Logging to systemd
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter(fmt="%(asctime)s %(name)s.%(levelname)s: %(message)s", datefmt="%Y.%m.%d %H:%M:%S")
 handler = logging.StreamHandler(stream=sys.stdout)
 handler.setFormatter(formatter)
@@ -366,13 +498,14 @@ logger.addHandler(handler)
 # Global config
 config = getConfig("config.json")
 
+dataFolder = "data/"
+
 if __name__ == '__main__':
 
-    if not exists("data/"):
-        os.makedirs("data/")
+    if not exists(dataFolder): os.makedirs(dataFolder)
 
-    # Read in key config info
-    eventId = getEventId(config, "referencedEventId")       # TODO: convert to command arg
+    # Read in key config info  
+    eventId = getEventId(config, "referencedEventId")
     if str(eventId).startswith("nostr:"): eventId = eventId[6:]
     if str(eventId).startswith("nevent"):
         e1, e2 = bech32.bech32_decode(eventId)
@@ -380,20 +513,31 @@ if __name__ == '__main__':
         tlv_length = tlv_bytes[1]
         tlv_value = tlv_bytes[2:tlv_length+2]
         eventId = bytes(tlv_value).hex()
+    # Add logger to file
+    fileLoggingHandler = logging.FileHandler(f"{dataFolder}{eventId}.log")
+    fileLoggingHandler.setFormatter(formatter)
+    logger.addHandler(fileLoggingHandler)
     botKey = getPrivateKey(config, "botPrivateKey")
-    relays = getNostrRelays(config, "relays")
+    relaysC = getNostrRelays(config, "relays")
+    relays = []
+    for nostrRelay in relaysC:
+        if str(nostrRelay).startswith("wss://"):
+            relays.append(nostrRelay)
+        else:
+            relays.append(f"wss://{nostrRelay}")
     excludePubkeys = normalizePubkeys(getExcludePubkeys(config, "excludePubkeys"))
     validateConfig(config)
     zapConditions = config["zapConditions"]
     zapMessage = getZapMessage(config, "zapMessage")
     conditionCounter = len(zapConditions)
+    lndServer = config["lndServer"]
 
-    # Pubkey to LUD16 cache
-    lud16PubkeyCache = loadLud16Cache()
+    # Pubkey to Lightning cache
+    pubkey2LightningIdCache = loadPubkey2LightningCache()
 
     # Load existing from tracking files
     participantPubkeys = loadPubkeys("participants", eventId)
-    paidPubkeys = loadPubkeys("paid", eventId)
+    paidPubkeys = listtodict(loadPubkeys("paid", eventId))
     paidLuds = loadPubkeys("paidluds", eventId)
     unzappablePubkeys = []
 
@@ -401,13 +545,13 @@ if __name__ == '__main__':
     foundEvents = getEventsOfEvent(eventId, relays)
 
     # Metrics tracking
-    totalSatsPaid = 0
-    totalFeesPaid = 0
+    cycleSatsPaid = 0
+    cycleFeesPaid = 0
     statusCounts = {"PAYMENTATTEMPTS": 0, "SKIPPED":0}
 
     # Check the events that others posted
     for msgEvent in foundEvents:
-        logger.debug("-" * 60)
+        logLine()
         if not isValidSignature(msgEvent.event):
             logger.warning(f"Event has invalid signature, skipping")
             statusCounts["SKIPPED"] += 1
@@ -420,6 +564,9 @@ if __name__ == '__main__':
         logger.debug(f" - id     : {publisherEventId}")
         logger.debug(f" - pubkey : {publisherPubkey}")
         logger.debug(f" - content: {eventContent}")
+        # add to participants if not yet present
+        if publisherPubkey not in participantPubkeys:
+            participantPubkeys.append(publisherPubkey)
         # check if pubkey on exclusion list
         if publisherPubkey in excludePubkeys:
             logger.debug(f"User is on exclusion list, skipping")
@@ -430,9 +577,6 @@ if __name__ == '__main__':
             logger.debug(f"User was already paid for this event, skipping")
             statusCounts["SKIPPED"] += 1
             continue
-        # add to participants if not yet present
-        if publisherPubkey not in participantPubkeys:
-            participantPubkeys.append(publisherPubkey)
         # check conditions
         conditionFound = False
         conditionNumber = 0
@@ -449,38 +593,43 @@ if __name__ == '__main__':
                         continue
             conditionFound = True
             satsToZap = zapCondition["zapAmount"]
-            logger.debug(f"Conditions matched. Planning to zap {satsToZap} sats")
         # We have amount to be zapped if condition was found
         if not conditionFound: 
             logger.debug(f"Content from {publisherPubkey} didnt meet zap conditions, skipping")
             statusCounts["SKIPPED"] += 1
             continue
-        # Get LUD16 for user
-        if publisherPubkey in lud16PubkeyCache:
-            lud16 = lud16PubkeyCache[publisherPubkey]
         else:
-            lud16 = lookupLud16ForPubkey(publisherPubkey)
-            if lud16 is None:
+            logger.info(f"Conditions matched. Planning to zap {satsToZap} sats to {publisherPubkey}")
+        # Get lightning id for user
+        if publisherPubkey in pubkey2LightningIdCache:
+            lightningId = pubkey2LightningIdCache[publisherPubkey]
+        else:
+            lightningId = getLightningIdForPubkey(publisherPubkey)
+            if lightningId is None:
                 logger.info(f"Unable to zap user. No lightning address found in profile, skipping")
                 if publisherPubkey not in unzappablePubkeys:
                     unzappablePubkeys.append(publisherPubkey)
                 statusCounts["SKIPPED"] += 1
                 continue
-            lud16PubkeyCache[publisherPubkey] = lud16
-            saveLud16Cache(lud16PubkeyCache)
-        logger.debug(f" - lud16  : {lud16}")
+            pubkey2LightningIdCache[publisherPubkey] = lightningId
+            savePubkey2LightningCache(pubkey2LightningIdCache)
+        logger.debug(f" - address: {lightningId}")
         # Check if we've already paid this lightning user
-        if lud16 in paidLuds: 
-            logger.debug(f"Lightning address for User {lud16} was already paid for this event, skipping")
+        if lightningId in paidLuds: 
+            logger.debug(f"Lightning address for User {lightningId} was already paid for this event, skipping")
             statusCounts["SKIPPED"] += 1
             continue
         # Get lnurlpay info
-        lnurlPayInfo, lnurl = getLNURLPayInfo(lud16)
+        lnurlPayInfo, lnurl = getLNURLPayInfo(lightningId)
+        if lnurl is None:
+            logger.debug(f"Lightning address for User {lightningId} is invalid, skipping")
+            statusCounts["SKIPPED"] += 1
+            continue
         lnurlBytes = bytes(lnurl,'utf-8')
         lnurlBits = bech32.convertbits(lnurlBytes,8,5)
         bech32lnurl = bech32.bech32_encode("lnurl", lnurlBits)
         if lnurlPayInfo is None:
-            logger.warn(f"Could not get LNURL info for identity: {lud16}. skipped")
+            logger.warning(f"Could not get LNURL info for identity: {lightningId}. skipped")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
@@ -490,13 +639,13 @@ if __name__ == '__main__':
         ## doesnt involve nostr without that, but since we want to reward promotions
         ## within nostr, i'll leave these in
         if "allowsNostr" not in lnurlPayInfo:
-            logger.debug(f"LN Provider of identity {lud16} does not support nostr. Zap not supported")
+            logger.debug(f"LN Provider of identity {lightningId} does not support nostr. Zap not supported")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
             continue
         if not lnurlPayInfo["allowsNostr"]:
-            logger.debug(f"LN Provider of identity {lud16} does not allow nostr. Zap not supported")
+            logger.debug(f"LN Provider of identity {lightningId} does not allow nostr. Zap not supported")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
@@ -504,14 +653,14 @@ if __name__ == '__main__':
         ## this one is the payment providers pubkey which we (and others) can use to
         ## validate the zap receipt that the provider will publish to nostr
         if "nostrPubkey" not in lnurlPayInfo:
-            logger.debug(f"LN Provider of identity {lud16} does not have nostrPubkey. Zap not supported")
+            logger.debug(f"LN Provider of identity {lightningId} does not have nostrPubkey. Zap not supported")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
             continue
         nostrPubkey = lnurlPayInfo["nostrPubkey"]
         if not all(k in lnurlPayInfo for k in ("callback","minSendable","maxSendable")): 
-            logger.debug(f"LN Provider of identity {lud16} does not have proper callback, minSendable, or maxSendable info. Zap not supported")
+            logger.debug(f"LN Provider of identity {lightningId} does not have proper callback, minSendable, or maxSendable info. Zap not supported")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
@@ -522,13 +671,13 @@ if __name__ == '__main__':
         maxSendable = lnurlPayInfo["maxSendable"]
         # check amount within range (minSendable and maxSendable are in millisats)
         if (satsToZap * 1000) < minSendable:
-            logger.debug(f"LN Provider of identity {lud16} does not allow zaps less than {minSendable} msat. Skipping")
+            logger.debug(f"LN Provider of identity {lightningId} does not allow zaps less than {minSendable} msat. Skipping")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
             continue
         if (satsToZap * 1000) > maxSendable:
-            logger.debug(f"LN Provider of identity {lud16} does not allow zaps greater than {maxSendable} msat. Skipping")
+            logger.debug(f"LN Provider of identity {lightningId} does not allow zaps greater than {maxSendable} msat. Skipping")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
@@ -538,31 +687,38 @@ if __name__ == '__main__':
         # send to provider, requesting invoice
         invoice = getInvoiceFromZapRequest(callback, satsToZap, kind9734, bech32lnurl)
         if not isValidInvoiceResponse(invoice):
-            logger.debug(f"Response from LN Provider of identity {lud16} did not provide a valid invoice. skipping")
+            logger.debug(f"Response from LN Provider of identity {lightningId} did not provide a valid invoice. skipping")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
             continue
+        # Capture verification url if provided
+        verifyUrl = None
+        if "verify" in invoice: verifyUrl = invoice["verify"]
         # Decode it
         paymentRequest = invoice["pr"]
-        decodedInvoice = getDecodedInvoice(paymentRequest, config["lndServer"])
+        decodedInvoice = getDecodedInvoice(paymentRequest, lndServer)
         # check if within ranges
         if not isValidInvoice(decodedInvoice, satsToZap):
-            logger.warn(f"Invoice from LN Provider of identity {lud16} is unacceptable. skipping")
+            logger.warning(f"Invoice from LN Provider of identity {lightningId} is unacceptable. skipping")
             if publisherPubkey not in unzappablePubkeys:
                 unzappablePubkeys.append(publisherPubkey)
             statusCounts["SKIPPED"] += 1
             continue
         # ok. If we got this far, we can pay it
-        paidPubkeys.append(publisherPubkey)
-        paidLuds.append(lud16)
+        paidPubkeys[publisherPubkey] = {"lightning_id":lightningId,"amount_sat":satsToZap}
+        if verifyUrl is not None: 
+            paidPubkeys[publisherPubkey]["payment_verify_url"] = verifyUrl
+        paidLuds.append(lightningId)
         statusCounts["PAYMENTATTEMPTS"] += 1
         logger.debug(f"Attempting payment of invoice")
-        paymentStatus, paymentFees = payInvoice(paymentRequest, config["lndServer"])
-        logger.debug(f"Payment complete...{paymentStatus}, fees paid: {paymentFees}")
-        if paymentStatus == "SUCCEEDED":
-            totalFeesPaid += paymentFees
-        totalSatsPaid += satsToZap
+        paymentStatus, paymentFees, paymentHash = payInvoice(paymentRequest, lndServer)
+        paidPubkeys[publisherPubkey]["payment_status"] = paymentStatus
+        paidPubkeys[publisherPubkey]["fee_msat"] = paymentFees
+        if paymentHash is not None: 
+            paidPubkeys[publisherPubkey]["payment_hash"] = paymentHash
+        cycleFeesPaid += paymentFees
+        cycleSatsPaid += satsToZap
         if paymentStatus in statusCounts:
             statusCounts[paymentStatus] = statusCounts[paymentStatus] + 1
         else:
@@ -574,20 +730,55 @@ if __name__ == '__main__':
     # Save data at end
     savePubkeys("participants", eventId, participantPubkeys)
 
+    # check for timeouts
+    paidPubkeys, resolvedCount, reducedFees = recheckTimedout(paidPubkeys, lndServer)
+    cycleFeesPaid -= reducedFees
+    if resolvedCount > 0: savePubkeys("paid", eventId, paidPubkeys)
+
+    # Report for Event
+    logLine()
+    logger.info(f"Responses processed: {len(foundEvents)}")
+    logger.info(f"Unique pubkeys seen: {len(participantPubkeys)}")
+    logger.info(f"Pubkeys paid       : {len(paidPubkeys.keys())}")
+
     # Report unzappable
     if len(unzappablePubkeys) > 0:
-        logger.info("-" * 60)
-        logger.info("Unzappable npubs:")
+        logLine()
+        logger.info(f"Unzappable npubs: {len(unzappablePubkeys)}")
         for p in unzappablePubkeys:
             npub = PublicKey(raw_bytes=bytes.fromhex(p)).bech32()
             logger.info(f"  {npub}")
 
-    # Report status counts
-    logger.info("-" * 60)
-    feesAsSats = int(math.ceil(float(totalFeesPaid)/float(1000)))
+    # Report status counts for cycle
+    logLine()
+    logger.info("For this run of the script")
+    cycleFeesAsSats = int(math.ceil(float(cycleFeesPaid)/float(1000)))
+    logger.info(f"          REVIEWED = {len(foundEvents)}")
+    skipped = statusCounts["SKIPPED"]
+    attempts = statusCounts["PAYMENTATTEMPTS"]
+    logger.info(f"           SKIPPED = {skipped}")
+    logger.info(f"  PAYMENT ATTEMPTS = {attempts}")
     for k in statusCounts.keys():
-        logger.info(f"{k} = {statusCounts[k]}")
+        if k in ("PAYMENTATTEMPTS","SKIPPED"): continue
+        logger.info(f"    {k: >10} = {statusCounts[k]}")
+    logger.info("")
+    logger.info(f"Sats paid: {cycleSatsPaid} sats")
+    logger.info(f"Fees paid: {cycleFeesPaid} msats")
+    logger.info( "--------------------------")
+    logger.info(f"Total    : {cycleSatsPaid + cycleFeesAsSats} sats")
+
+    # Sum total paid
+    logLine()
+    logger.info("Overall for all runs of script on this event")
+    totalSatsPaid = 0
+    totalFeesPaid = 0
+    for paidPubkey in paidPubkeys.keys():
+        if "amount_sat" in paidPubkeys[paidPubkey]: 
+            totalSatsPaid += paidPubkeys[paidPubkey]["amount_sat"]
+        if "fee_msat" in paidPubkeys[paidPubkey]:
+            totalFeesPaid += paidPubkeys[paidPubkey]["fee_msat"]
+    totalFeesAsSats = int(math.ceil(float(totalFeesPaid)/float(1000)))
     logger.info(f"Sats paid: {totalSatsPaid} sats")
     logger.info(f"Fees paid: {totalFeesPaid} msats")
     logger.info( "--------------------------")
-    logger.info(f"Total    : {totalSatsPaid + feesAsSats} sats")
+    logger.info(f"Total    : {totalSatsPaid + totalFeesAsSats} sats")
