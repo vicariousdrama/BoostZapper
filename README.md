@@ -152,8 +152,20 @@ to communicate with the LND server over REST
 
 The `port` is that port to connect to.
 
-The `macaroon` should be provided in hex format. With an existing 
-macaroon, you can conver to hex via `cat custom.macaroon | xxd -p -c 1000`
+The `macaroon` should be provided in hex format. 
+
+The permissions needed are
+
+- lnrpc.Lightning/DecodePayReq
+- routerrpc.Router/SendPaymentV2
+- routerrpc.Router/TrackPaymentV2
+
+You can bake the macaroon as follows before convertng to hex.
+```sh
+lncli bakemacaroon uri:/lnrpc.Lightning/DecodePayReq uri:/routerrpc.Router/SendPaymentV2 uri:/routerrpc.Router/TrackPaymentV2 --save_to ${HOME}/BoostZapper.macaroon
+
+cat ${HOME}/BoostZapper.macaroon | xxd -p -c 1000
+```
 
 The `paymentTimeout` is the number of seconds that should be allowed
 for the payment to complete routing.  This helps avoid unnecessarily
@@ -180,9 +192,9 @@ The console will show output reflecting each event being analyzed.
 
 The following files will be created and updated
 
-* **data/lud16cache.json** - This file contains a mapping of pubkeys to lightning addresses that is populated by pulling kind0 events for a pubkey.  Periodically this file may need to be deleted and rebuilt if users change their addresses
+* **data/lightningIdcache.json** - This file contains a mapping of pubkeys to lightning addresses that is populated by pulling kind0 events for a pubkey.  Periodically this file may need to be deleted and rebuilt if users change their addresses
 
-* **data/{eventid}.paid.json** - An output file that tracks the pubkeys that were zapped for the event referenced. This tracking prevents paying people twice.
+* **data/{eventid}.paid.json** - An output file that tracks the pubkeys that were zapped for the event referenced. This tracking prevents paying people twice. It also includes the amount paid, fees paid and other payment metadata
 
 * **data/{eventid}.paidluds.json** - An output file that tracks the lightning addresses that were zapped for the event referenced. This tracking prevents paying people twice.
 
