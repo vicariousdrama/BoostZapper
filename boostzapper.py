@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+from datetime import datetime
 from os.path import exists
 from urllib3.exceptions import InsecureRequestWarning, ReadTimeoutError
 from nostr.key import PrivateKey, PublicKey
@@ -699,7 +699,9 @@ def zapEvents():
             statusCounts["SKIPPED"] += 1
             continue
         # ok. If we got this far, we can pay it
-        paidPubkeys[publisherPubkey] = {"lightning_id":lightningId,"amount_sat":satsToZap}
+        paymentTime = int(time.time())
+        paymentTimeHuman = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        paidPubkeys[publisherPubkey] = {"lightning_id":lightningId,"amount_sat":satsToZap,"payment_time":paymentTime,"payment_time_human":paymentTimeHuman}
         if verifyUrl is not None: 
             paidPubkeys[publisherPubkey]["payment_verify_url"] = verifyUrl
         paidLuds.append(lightningId)
@@ -801,23 +803,29 @@ if __name__ == '__main__':
 
     # Report for Event
     logLine()
-    logger.info(f"RUN SUMMARY")
+    logger.info(f"SUMMARY")
     logLine()
     logger.info(f"Responses processed: {len(foundEvents)}")
     logger.info(f"Unique pubkeys seen: {len(participantPubkeys)}")
-    logger.info(f"Pubkeys paid       : {len(paidPubkeys.keys())}")
-
-    # Report unzappable
-    if len(unzappablePubkeys) > 0:
-        logLine()
-        logger.info(f"Unzappable npubs: {len(unzappablePubkeys)}")
-        for p in unzappablePubkeys:
-            npub = PublicKey(raw_bytes=bytes.fromhex(p)).bech32()
-            logger.info(f"  {npub}")
+    logger.info(f"Total Pubkeys paid so far: {len(paidPubkeys.keys())}")
+    logLine()
+    logger.info("For all runs of script on this event")
+    totalSatsPaid = 0
+    totalFeesPaid = 0
+    for paidPubkey in paidPubkeys.keys():
+        if "amount_sat" in paidPubkeys[paidPubkey]: 
+            totalSatsPaid += paidPubkeys[paidPubkey]["amount_sat"]
+        if "fee_msat" in paidPubkeys[paidPubkey]:
+            totalFeesPaid += paidPubkeys[paidPubkey]["fee_msat"]
+    totalFeesAsSats = int(math.ceil(float(totalFeesPaid)/float(1000)))
+    logger.info(f"Sats paid: {totalSatsPaid: >7}    sats")
+    logger.info(f"Fees paid: {totalFeesPaid: >10} msats")
+    logger.info( "---------------------------")
+    logger.info(f"Total    : {totalSatsPaid + totalFeesAsSats} sats")
 
     # Report status counts for cycle
     logLine()
-    logger.info("For this run of the script")
+    logger.info("For only this run of the script")
     cycleFeesAsSats = int(math.ceil(float(cycleFeesPaid)/float(1000)))
     logger.info(f"          REVIEWED = {len(foundEvents)}")
     skipped = statusCounts["SKIPPED"]
@@ -828,23 +836,18 @@ if __name__ == '__main__':
         if k in ("PAYMENTATTEMPTS","SKIPPED"): continue
         logger.info(f"    {k: >10} = {statusCounts[k]}")
     logger.info("")
-    logger.info(f"Sats paid: {cycleSatsPaid} sats")
-    logger.info(f"Fees paid: {cycleFeesPaid} msats")
-    logger.info( "--------------------------")
-    logger.info(f"Total    : {cycleSatsPaid + cycleFeesAsSats} sats")
+    logger.info(f" Sats paid: {cycleSatsPaid: >7}    sats")
+    logger.info(f" Fees paid: {cycleFeesPaid: >10} msats")
+    logger.info( "---------------------------")
+    logger.info(f"Cycle Total: {cycleSatsPaid + cycleFeesAsSats} sats")
 
-    # Sum total paid
-    logLine()
-    logger.info("Overall for all runs of script on this event")
-    totalSatsPaid = 0
-    totalFeesPaid = 0
-    for paidPubkey in paidPubkeys.keys():
-        if "amount_sat" in paidPubkeys[paidPubkey]: 
-            totalSatsPaid += paidPubkeys[paidPubkey]["amount_sat"]
-        if "fee_msat" in paidPubkeys[paidPubkey]:
-            totalFeesPaid += paidPubkeys[paidPubkey]["fee_msat"]
-    totalFeesAsSats = int(math.ceil(float(totalFeesPaid)/float(1000)))
-    logger.info(f"Sats paid: {totalSatsPaid} sats")
-    logger.info(f"Fees paid: {totalFeesPaid} msats")
-    logger.info( "--------------------------")
-    logger.info(f"Total    : {totalSatsPaid + totalFeesAsSats} sats")
+    # Report unzappable
+    if len(unzappablePubkeys) > 0:
+        logLine()
+        logger.info(f"Recent unzappable npubs: {len(unzappablePubkeys)}")
+        for p in unzappablePubkeys:
+            npub = PublicKey(raw_bytes=bytes.fromhex(p)).bech32()
+            logger.info(f"  {npub}")
+
+
+
