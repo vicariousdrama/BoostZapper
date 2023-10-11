@@ -39,13 +39,15 @@ CONDITIONS CLEAR
 
 PROFILE [--name <name>] [--picture <url for profile picture>] [--banner <url for profile banner>] [--description <description of account>]
 
+ZAPMESSAGE <message to send with zap>
+
 EVENT <event identifier>
 
 CREDITS ADD <amount>
 
 STATUS
 
-MESSAGE <message to support>
+SUPPORT <message to send to support>
 ```
 
 ## RELAYS
@@ -289,6 +291,22 @@ lud16/lightning address: wearydoor58@walletofsatoshi.com
 nip05/nostr address: crabby@nodeyez.com
 ```
 
+## ZAPMESSAGE &lt;message to send with zap&gt;
+
+When a nostr zap is sent, a message or comment can be included with the zap.  Different LNURL Providers can have their own constraints on whether messages are accepted, and of what length.  To avoid errors, its recommended to keep messages brief.  If your message contains a URL, some providers will turn that into a hyperlink, but may be limited to the first URL that appears within the message.
+
+Example command:
+
+```user
+ZAPMESSAGE Thanks for sharing your interpretation of today's #InkblotArt!
+```
+
+Example response:
+
+```bot
+The zap message has been set to: Thanks for sharing your interpretation of today's #InkblotArt!
+```
+
 ## EVENT &lt;eventid&gt;
 
 The `EVENT` command requires specifying an event identifier to be monitored. Only one event can be monitored at a time per account.  The event identifier may be provided in bech32 or hexadecimal format.
@@ -347,6 +365,12 @@ lnbc200u1pjjg58cpp5g4uqmvplrf4k3unl6u24k2pr3eurzrxcl2zp7am24xtr6af3j68qhp5u9nxg2
 
 Your nostr client may turn the lightning invoice into a QR code or button for which to pay to complete the process.
 
+When the bot recognizes the invoice as paid, a follow up message will be sent
+
+```bot
+Invoice paid. 20000 credits have been applied to your account
+```
+
 ## STATUS
 
 The `STATUS` command provides a simplified report of the configuration
@@ -358,14 +382,18 @@ STATUS
 
 Example response:
 ```
-The bot is configured with 5 relays, 2 conditions, and monitoring event 8016ac..a63bdf
+The bot is configured with 5 relays, 2 conditions, and monitoring event 8016ac..a63bdf.
 
-Zapped alltime: 78100
-Zapped today: 2400
-Credits remaining: 43788
+Responses to the event matching conditions will be zapped up to 20 sats with the following message: Thanks for sharing your interpretation of today's #InkblotArt!
+
+   Credits applied: 200000
+All time zaps sent:  78100
+           Routing:    236
+           Service:   6000
+ Credits remaining: 115664
 ```
 
-## MESSAGE &lt;message to support&gt;
+## SUPPORT &lt;message to send to support&gt;
 
 Under normal circumstances, the bot account itself is not monitored. Direct Encrypted messages with the bot allow for users to configure the bot and review status for their events without polluting the public feeds of nostr.
 
@@ -374,7 +402,7 @@ For convenience messages may be forwarded to the operator of the bot to draw att
 Example command:
 
 ```user
-MESSAGE I need additional rule types be added to the bot
+SUPPORT I need additional rule types be added to the bot
 ```
 
 Example response:
