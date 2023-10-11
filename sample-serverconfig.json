@@ -1,0 +1,46 @@
+{
+    "nostr": {
+        "botnsec.comment": "The nsec for the primary bot running the service",
+        "botnsec": "",
+        "botProfile.comment": "The metadata for the bot running the service",
+        "botProfile": {
+            "name": "Jessica Botzzapp",
+            "description": "This bot can be used to zap responses to events. Send a direct message to the bot to get started. (Coded by vicariousdrama@nodeyez.com)",
+            "picture": "",
+            "banner": "",
+            "lud16": "wearydoor58@walletofsatoshi.com",
+            "nip05": "jessica@nodeyez.com"
+        },
+        "relays.comment": "The list of relays that the primary bot uses",
+        "relays": [
+            "relay.nostr.bg",
+            "relay.damus.io",
+            "nos.lol",
+            "nostr.wine",
+            "eden.nostr.land"    
+        ],
+        "operatornpub.comment": "The npub of the operator to relay support messages to",
+        "operatornpub": "",
+        "defaultProfile.comment": "The default profile fields for newly created zapper identities",
+        "defaultProfile": {
+            "name": "Zapping Bot",
+            "description": "This bot zaps responses to events",
+            "picture": "",
+            "banner": "",
+            "lud16": "wearydoor58@walletofsatoshi.com",
+            "nip05": ""
+        }
+    },
+    "lnd": {
+        "address.comment": "The IP address or FQDN to communicate with the LND server over REST",
+        "address": "127.0.0.1",
+        "port.comment": "The port the LND server is listening on for REST",
+        "port": "10080",
+        "macaroon.comment": "The macaroon for authentication and authorization for the LND server in hex format",
+        "macaroon": "0201036C.....",
+        "paymentTimeout.comment": "Time permitted in seconds to complete a payment or expire it",
+        "paymentTimeout": 30,
+        "feeLimit.comment": "Fee limit, in sats, allowed for each payment made",
+        "feeLimit": 2
+    }
+}

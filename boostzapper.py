@@ -604,6 +604,11 @@ def zapEvents():
                     unzappablePubkeys.append(publisherPubkey)
                 statusCounts["SKIPPED"] += 1
                 continue
+            identityParts = lightningId.split("@")
+            if len(identityParts) != 2: 
+                logger.debug(f"Lightning address for User {lightningId} is invalid, skipping")
+                statusCounts["SKIPPED"] += 1
+                continue
             pubkey2LightningIdCache[publisherPubkey] = lightningId
             savePubkey2LightningCache(pubkey2LightningIdCache)
         logger.debug(f"Lightning Address: {lightningId}")
