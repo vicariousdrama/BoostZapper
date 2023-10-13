@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-from os import exists
 import json
+import os
 import botutils as utils
 
 logger = None       # set by calling setLogger
 
 # Make common folders if not already present
 dataFolder = "data/"
-userConfigFolder = f"{dataFolder}users"
+userConfigFolder = f"{dataFolder}userConfigs/"
+userLedgerFolder = f"{dataFolder}userLedgers/"
+logFolder = f"{dataFolder}logs/"
 utils.makeFolderIfNotExists(dataFolder)
 utils.makeFolderIfNotExists(userConfigFolder)
+utils.makeFolderIfNotExists(userLedgerFolder)
+utils.makeFolderIfNotExists(logFolder)
 
 def loadJsonFile(filename):
-    if not exists(filename): return None
+    if filename is None: return None
+    if not os.path.exists(filename): return None
     with open(filename) as f:
         return(json.load(f))
 
@@ -24,18 +29,19 @@ def getConfig(filename):
     c = utils.getCommandArg("config") # allow overriding default filename
     if c is not None: filename = c
     logger.debug(f"Loading config from {filename}")
-    if not exists(filename):
+    if not os.path.exists(filename):
         logger.warning(f"Config file does not exist at {filename}")
         return {}
     return loadJsonFile(filename)    
 
 def loadInvoices():
     filename = f"{dataFolder}outstandingInvoices.json"
-    if not exists(filename): return []
+    if not os.path.exists(filename): return []
     return loadJsonFile(filename)
 
 def saveInvoices(outstandingInvoices):
     filename = f"{dataFolder}outstandingInvoices.json"
     saveJsonFile(filename, outstandingInvoices)
 
-
+def listUserConfigs():
+    return os.listdir(userConfigFolder)

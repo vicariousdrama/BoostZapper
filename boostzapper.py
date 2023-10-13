@@ -128,6 +128,10 @@ def getExcludePubkeys(d, k):
     if k in d: return d[k]
     return []
 
+def getExcludeContent(d, k):
+    if k in d: return d[k]
+    return []
+
 def normalizePubkeys(d):
     z = []
     for n in d:
@@ -528,9 +532,20 @@ def reviewEvents():
             participantPubkeys.append(publisherPubkey)
         # check if pubkey on exclusion list
         if publisherPubkey in excludePubkeys:
-            logger.debug(f"User is on exclusion list, skipping")
+            logger.debug(f"User {publisherPubkey} is on exclusion list, skipping")
             statusCounts["SKIPPED"] += 1
             continue
+        publisherPubkeyBech32 = PublicKey(raw_bytes=bytes.fromhex(publisherPubkey)).bech32()
+        if publisherPubkeyBech32 in excludePubkeys:
+            logger.debug(f"User {publisherPubkeyBech32} is on exclusion list, skipping")
+            statusCounts["SKIPPED"] += 1
+            continue
+        # check if content has words on exclusion list
+        for ecPhrase in excludeContent:
+            if ecPhrase in eventContent:
+                logger.debug(f"Content {ecPhrase} is on exclusion list, skipping")
+                statusCounts["SKIPPED"] += 1
+                continue
         # check conditions
         conditionFound = False
         conditionNumber = 0
@@ -558,7 +573,9 @@ def reviewEvents():
             if publisherPubkey in bestEventForPubkey:
                 # update event to zap and amount if the amount is more
                 assignIt = False
-                if bestEventForPubkey[publisherPubkey]["amount"] < satsToZap:
+                currentSatsToZap = bestEventForPubkey[publisherPubkey]["amount"]
+                if currentSatsToZap < satsToZap:
+                    logger.debug(f"-- was previously going to zap {currentSatsToZap}")
                     assignIt = True
             if assignIt:
                 bestEventForPubkey[publisherPubkey] = {
@@ -768,6 +785,7 @@ if __name__ == '__main__':
         else:
             relays.append(f"wss://{nostrRelay}")
     excludePubkeys = normalizePubkeys(getExcludePubkeys(config, "excludePubkeys"))
+    excludeContent = getExcludeContent(config, "excludeConentContains")
     validateConfig(config)
     zapConditions = config["zapConditions"]
     zapMessage = getZapMessage(config, "zapMessage")

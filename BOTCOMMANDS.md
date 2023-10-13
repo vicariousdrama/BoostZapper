@@ -29,7 +29,7 @@ RELAYS CLEAR
 
 CONDITIONS LIST
 
-CONDITIONS ADD [--amount <zap amount if matched>][--requiredLength <length required to match>] [--requiredPhrase <phrase required to match>]
+CONDITIONS ADD [--amount <zap amount if matched>] [--requiredLength <length required to match>] [--requiredPhrase <phrase required to match>] [--requiredRegex <regular expression to match>] [--replyMessage <message to reply with if matched>]
 
 CONDITIONS UP <index>
 

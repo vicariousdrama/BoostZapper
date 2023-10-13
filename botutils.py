@@ -37,9 +37,7 @@ def getCommandArg(p):
 
 def getTimes(aDate=None):
     theDate = aDate
-    if aDate is None: theDate = datetime.utcnow()
-    theDate.microsecond = 0
-    theDate.tzinfo = None
+    if aDate is None: theDate = datetime.datetime.utcnow()
     isoTime = theDate.isoformat(timespec="seconds")
     secTime = int(time.time())
     return secTime, isoTime    

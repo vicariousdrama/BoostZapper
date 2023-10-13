@@ -159,10 +159,12 @@ The permissions needed are
 - lnrpc.Lightning/DecodePayReq
 - routerrpc.Router/SendPaymentV2
 - routerrpc.Router/TrackPaymentV2
+- lnrpc.Lightning/AddInvoice
+- invoicesrpc.Invoices/LookupInvoiceV2
 
 You can bake the macaroon as follows before convertng to hex.
 ```sh
-lncli bakemacaroon uri:/lnrpc.Lightning/DecodePayReq uri:/routerrpc.Router/SendPaymentV2 uri:/routerrpc.Router/TrackPaymentV2 --save_to ${HOME}/BoostZapper.macaroon
+lncli bakemacaroon uri:/lnrpc.Lightning/DecodePayReq uri:/routerrpc.Router/SendPaymentV2 uri:/routerrpc.Router/TrackPaymentV2 uri:/lnrpc.Lightning/AddInvoice uri:/invoicesrpc.Invoices/LookupInvoiceV2 --save_to ${HOME}/BoostZapper.macaroon
 
 cat ${HOME}/BoostZapper.macaroon | xxd -p -c 1000
 ```
