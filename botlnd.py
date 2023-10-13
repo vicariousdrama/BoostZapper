@@ -19,6 +19,8 @@ config = None
 def getLNDUrl(suffix):
     serverAddress = config["address"]
     serverPort = config["port"]
+    url = f"https://{serverAddress}:{serverPort}{suffix}"
+    return url
 
 def getLNDHeaders():
     headers = {
@@ -73,22 +75,34 @@ def createInvoice(amount=21000, memo=None, expiry=86400):
     # will allow settling an incoming HTLC payable to this preimage. 
     # When using REST, this field must be encoded as base64.
     r_preimage_bytes = os.urandom(32)
-    r_preimage_base64 = base64.b64encode(r_preimage_bytes)
+    r_preimage_base64_bytes = base64.b64encode(r_preimage_bytes)
+    r_preimage_base64_message = r_preimage_base64_bytes.decode('ascii')
     data = {
         "memo": memo,
-        "r_preimage": r_preimage_base64,
+        "r_preimage": r_preimage_base64_message,
         "value": amount,
         "expiry": expiry
     }
     suffix = f"/v1/invoices"
-    return restLndPOST(suffix, data)
+    result = restLndPOST(suffix, data)
+    if result is not None:
+        if "message" in result:
+            message = result["message"]
+            if message == "permission denied":
+                logger.warning("LND reports Permission Denied to create invoice. Check macaroon permissions")
+                return None
+    return result
 
 # Returns invoice
 def lookupInvoice(paymentHash):
     # Setup
-    base64paymentHash = base64.b64encode(bytes.fromhex(paymentHash))
-    base64paymentHash = urllib.parse.quote(base64paymentHash)
-    suffix = f"/v2/invoices/lookup/{base64paymentHash}"
+    base64paymentHash = paymentHash
+    if utils.isHex(paymentHash):
+        base64paymentHash = base64.b64encode(bytes.fromhex(paymentHash))
+    base64decoded = base64.b64decode(base64paymentHash)
+    base64encodedurlsafe = base64.urlsafe_b64encode(base64decoded)
+    base64paymentHash = urllib.parse.quote(base64encodedurlsafe)
+    suffix = f"/v2/invoices/lookup?payment_hash={base64paymentHash}"
     return restLndGET(suffix)
 
 # Returns payment status and fee_msat paid
@@ -170,19 +184,18 @@ def checkInvoices():
             logger.warning(json.dumps(obj=status,indent=2))
             continue
         state = 0
-        if "STATE" in status: state = status["STATE"]
         if "state" in status: state = status["state"]
-        if state == 0:   # OPEN
+        if state == "OPEN":
             # keep considering as outstanding
             logger.debug(f"invoice for npub {npub} still open")
             openInvoices.append(invoice)
-        elif state == 1: # SETTLED
+        elif state == "SETTLED":
             logger.debug(f"invoice for npub {npub} reported as settled")
             handlePaidInvoice(invoice)
-        elif state == 2: # CANCELED
+        elif state == "CANCELED":
             logger.debug(f"invoice for npub {npub} has been canceled")
             handleCanceledInvoice(invoice)
-        elif state == 3: # ACCEPTED
+        elif state == "ACCEPTED":
             # keep considering as outstanding
             logger.debug(f"invoice for npub {npub} accepted, not yet settled")
             openInvoices.append(invoice)
