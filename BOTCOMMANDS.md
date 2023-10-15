@@ -1,7 +1,5 @@
 # Bot Commands
 
-__*NOTICE: THESE COMMANDS ARE A SPECIFICATION THAT IS UNDER DESIGN BUT HAVE NOT YET BEEN IMPLEMENTED.*__
-
 Commands for interacting with the bot for purposes of configuring the bot, adding credits, and messaging support.
 
 ## HELP
@@ -43,7 +41,13 @@ ZAPMESSAGE <message to send with zap>
 
 EVENT <event identifier>
 
+BALANCE
+
 CREDITS ADD <amount>
+
+ENABLE
+
+DISABLE
 
 STATUS
 
@@ -341,6 +345,22 @@ Example response:
 No longer monitoring an event
 ```
 
+## BALANCE
+
+The `BALANCE` command reports the balance of credits
+
+Example command:
+
+```user
+BALANCE
+```
+
+Example response:
+
+```bot
+Your balance is 51223. To add credits, specify the full command. e.g. CREDITS ADD 21000
+```
+
 ## CREDITS ADD &lt;amount&gt;
 
 The `CREDITS` command allows for adding credits to the account for the bot to use for expenditures.  Credits are non-refundable and cover the cost of sending zaps and the routing fees required.
@@ -393,6 +413,39 @@ All time zaps sent:  78100
  Credits remaining: 115664
 ```
 
+## ENABLE
+
+The `ENABLE` command enables the bot to process messages and send zaps if the configuration is valid.  If there is a configuration requirement not met, the response will indicate as such
+
+Example command:
+```user
+ENABLE
+```
+
+Example response:
+```
+Bot enabled!
+```
+
+Example response for a validation error
+```
+Unable to enable the bot. The eventId must be set. Use EVENT <event identifier>
+```
+
+## DISABLE
+
+The `DISABLE` command disables the bot so that it will no longer continue processing events until started again.
+
+Example command:
+```user
+DISABLE
+```
+
+Example response:
+```
+Bot disabled. Events will not be processed until re-enabled
+```
+
 ## SUPPORT &lt;message to send to support&gt;
 
 Under normal circumstances, the bot account itself is not monitored. Direct Encrypted messages with the bot allow for users to configure the bot and review status for their events without polluting the public feeds of nostr.
@@ -408,6 +461,6 @@ SUPPORT I need additional rule types be added to the bot
 Example response:
 
 ```bot
-Your message has been forwarded through nostr relays. The operator may reach out to you directly or through other channels.  If you need to temporarily stop the bot, you can set the event identifier to 0.
+Your message has been forwarded through nostr relays. The operator may reach out to you directly or through other channels.  If you need to temporarily stop the bot, you can use the DISABLE command or set EVENT 0
 ```
 

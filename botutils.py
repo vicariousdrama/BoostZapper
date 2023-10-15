@@ -23,6 +23,23 @@ def hexToBech32(hexInput, hrp):
 def isHex(s):
     return set(s).issubset(set('abcdefABCDEF0123456789'))
 
+def normalizeToBech32(v, hrp):
+    # v can be hex of length 64, or bech32
+    if v == "0": v = ""
+    if str(v).startswith("nostr:"): v = v[6:]
+    if len(v) > 0:
+        if str(v).startswith("n"):
+            v = bech32ToHex(v)
+        if isHex(v) and len(v) == 64:
+            return hexToBech32(v, hrp)
+    return None
+
+def normalizeToHex(v):
+    if len(v) == 0: return ""
+    if str(v).startswith("n"): v = bech32ToHex(v)
+    if isHex(v): return v
+    return None
+
 def getCommandArg(p):
     b = False
     v = None

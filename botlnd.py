@@ -105,6 +105,10 @@ def lookupInvoice(paymentHash):
     suffix = f"/v2/invoices/lookup?payment_hash={base64paymentHash}"
     return restLndGET(suffix)
 
+def decodeInvoice(paymentRequest):
+    suffix = f"/v1/payreq/{paymentRequest}"
+    return restLndGET(suffix)
+
 # Returns payment status and fee_msat paid
 def trackPayment(paymentHash):
     # Setup
@@ -146,6 +150,61 @@ def trackPayment(paymentHash):
         except Exception as e:
             logger.warning("Error closing connection in trackPayment")
     return status, fee_msat
+
+def payInvoice(paymentRequest):
+    logger.debug(f"Paying invoice")
+    feeLimit = config["feeLimit"]
+    paymentTimeout = config["paymentTimeout"]
+    suffix = "/v2/router/send"
+    lndPostData = {
+        "payment_request": paymentRequest,
+        "fee_limit_sat": feeLimit,
+        "timeout_seconds": paymentTimeout
+    }
+    url = getLNDUrl(suffix)
+    timeout = getLNDTimeouts()
+    proxies = getLNDProxies()
+    headers = getLNDHeaders()
+    requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+    resultStatus = "UNKNOWNPAYING"
+    resultFeeMSat = 0
+    json_response = None
+    payment_hash = None
+    r = requests.post(url=url,stream=True,data=json.dumps(lndPostData),timeout=timeout,proxies=proxies,headers=headers,verify=False)
+    try:
+        for raw_response in r.iter_lines():
+            json_response = json.loads(raw_response)
+            if "result" in json_response: json_response = json_response["result"]
+            newStatus = resultStatus
+            if "status" in json_response:
+                newStatus = json_response["status"]
+            if "fee_msat" in json_response:
+                resultFeeMSat = int(json_response["fee_msat"])
+            if "payment_hash" in json_response:
+                payment_hash = json_response["payment_hash"]
+            if newStatus != resultStatus:
+                resultStatus = newStatus
+                if resultStatus == "SUCCEEDED":
+                    logger.debug(f" - {resultStatus}, routing fee paid: {resultFeeMSat} msat")
+                elif resultStatus == "FAILED":
+                    failureReason = "unknown failure reason"
+                    if "failure_reason" in json_response:
+                        failureReason = json_response["failure_reason"]
+                    logger.warning(f" - {resultStatus} : {failureReason}")
+                elif resultStatus == "IN_FLIGHT":
+                    logger.debug(f" - {resultStatus}")
+                else:
+                    logger.info(f" - {resultStatus}")
+                    logger.info(json_response)
+    except Exception as rte: # (ConnectionError, TimeoutError, ReadTimeoutError) as rte:
+        try:
+            r.close()
+        except Exception as e:
+            logger.warning("Error closing connection after exception in payInvoice")
+        if json_response is not None: logger.debug(json_response)
+        return "TIMEOUT", (feeLimit * 1000), payment_hash
+    r.close()
+    return resultStatus, resultFeeMSat, payment_hash
 
 def monitorInvoice(theInvoice):
     invoices = files.loadInvoices()
