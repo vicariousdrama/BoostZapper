@@ -32,18 +32,18 @@
         },
         "defaultRelays.comment": "The default relays to assign to newly created zapper identities",
         "defaultRelays": [
-            "wss://nostr.pleb.network",
-            "wss://nostr-pub.wellorder.net",
-            "wss://nostr.mom",
-            "wss://relay.nostr.bg",
-            "wss://relay.damus.io",
-            "wss://nos.lol",
-            "wss://nostr.wine"
+            {"url": "wss://nostr.pleb.network", "read": true, "write": true},
+            {"url": "wss://nostr-pub.wellorder.net", "read": true, "write": true},
+            {"url": "wss://nostr.mom", "read": true, "write": true},
+            {"url": "wss://relay.nostr.bg", "read": true, "write": true},
+            {"url": "wss://relay.damus.io", "read": true, "write": true},
+            {"url": "wss://nos.lol", "read": true, "write": true},
+            {"url": "wss://nostr.wine", "read": true, "write": true}
         ],
-        "fees_mcredit.comment": "Fees the service should charge for types of processing",
-        "fees_mcredit": {
-            "replyMessage": 20,
-            "zapEvent": 20,
+        "fees.comment": "Fees the service should charge for types of processing, as measured in mcredits",
+        "fees": {
+            "replyMessage": 50,
+            "zapEvent": 50,
             "time864": 1000
         }
     },

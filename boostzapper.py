@@ -182,7 +182,10 @@ def getEventsOfEvent(eventId, relays):
     # connect to relays
     relay_manager = RelayManager()
     for nostrRelay in relays:
-        relay_manager.add_relay(nostrRelay)
+        if type(nostrRelay) is dict:
+            relay_manager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
+        if type(nostrRelay) is str:
+            relay_manager.add_relay(nostrRelay)
     relay_manager.add_subscription(subscription_id, filters)
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
     time.sleep(1.25) # allow the connections to open
@@ -210,7 +213,10 @@ def getLightningIdForPubkey(userPubkey):
     # connect to relays
     relay_manager = RelayManager()
     for nostrRelay in relays:
-        relay_manager.add_relay(nostrRelay)
+        if type(nostrRelay) is dict:
+            relay_manager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
+        if type(nostrRelay) is str:
+            relay_manager.add_relay(nostrRelay)
     relay_manager.add_subscription(subscription_id, filters)
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
     time.sleep(1.25) # allow the connections to open

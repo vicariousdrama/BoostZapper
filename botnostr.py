@@ -28,7 +28,10 @@ def connectToRelays():
     botRelayManager = RelayManager()
     relays = getNostrRelaysFromConfig(config)
     for nostrRelay in relays:
-        botRelayManager.add_relay(nostrRelay)
+        if type(nostrRelay) is dict:
+            botRelayManager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
+        if type(nostrRelay) is str:
+            botRelayManager.add_relay(url=nostrRelay)
     botRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE})
 
 def getNpubConfigFilename(npub):
@@ -189,7 +192,7 @@ def handleHelp(npub, content):
         elif secondWord == "RELAYS":
             message = "Relays commands:"
             message = f"{message}\nRELAYS LIST"
-            message = f"{message}\nRELAYS ADD <relay>"
+            message = f"{message}\nRELAYS ADD <relayUrl> [--canRead] [--canWrite]"
             message = f"{message}\nRELAYS DELETE <index>"
             message = f"{message}\nRELAYS CLEAR"
             handled = True
@@ -203,7 +206,7 @@ def handleHelp(npub, content):
         elif secondWord == "EXCLUDES":
             message = "Excludes commands:"
             message = f"{message}\nEXCLUDES LIST"
-            message = f"{message}\nEXCLUDES ADD <relay>"
+            message = f"{message}\nEXCLUDES ADD <exclude phrase or npub>"
             message = f"{message}\nEXCLUDES DELETE <index>"
             message = f"{message}\nEXCLUDES CLEAR"
             handled = True
@@ -268,12 +271,23 @@ def getNostrRelaysForNpub(npub):
 
 def getNostrRelaysFromConfig(aConfig):
     relays = []
+    relayUrls = []
     if "relays" in aConfig:
         for relay in aConfig["relays"]:
-            if str(relay).startswith("wss://"):
-                relays.append(relay)
-            else:
-                relays.append(f"wss://{relay}")
+            relayUrl = ""
+            canRead = True
+            canWrite = True
+            if type(relay) is str:
+                relayUrl = relay
+            if type(relay) is dict:
+                if "url" not in relay: continue
+                relayUrl = relay["url"]
+                canRead = relay["read"] if "canRead" in relay else canRead
+                canWrite = relay["write"] if "canWrite" in relay else canWrite
+            relayUrl = relayUrl if str(relayUrl).startswith("wss://") else f"wss://{relayUrl}"
+            if relayUrl not in relayUrls:
+                relayUrls.append(relayUrl)
+                relays.append({"url":relayUrl,"read":canRead,"write":canWrite})
     return relays
 
 def handleFees(npub, content):
@@ -281,7 +295,6 @@ def handleFees(npub, content):
     feesZapEvent = 20
     feesTime864 = 1000
     fees = None
-    if "fees_mcredit" in config: fees = config["fees_mcredit"]
     if "fees" in config: fees = config["fees"]
     if fees is not None:
         if "replyMessage" in fees: feesReplyMessage = fees["replyMessage"]
@@ -295,7 +308,81 @@ def handleFees(npub, content):
     sendDirectMessage(npub, message)
 
 def handleRelays(npub, content):
-    handleGenericList(npub, content, "Relay", "Relays")
+    singular = "Relay"
+    plural = "Relays"
+    pluralLower = str(plural).lower()
+    pluralupper = str(plural).upper()
+    words = content.split()
+    if len(words) > 1:
+        secondWord = str(words[1]).upper()
+        if secondWord in ("CLEAR","DELETE"):
+            handleGenericList(npub, content, singular, plural)
+            return
+        npubConfig = getNpubConfigFile(npub)
+        theList = npubConfig[pluralLower] if pluralLower in npubConfig else []
+        if secondWord in ("ADD"):
+            url = None
+            canRead = True if len(word) < 3 else False
+            canWrite = True if len(word) < 3 else False
+            for word in words[2:]:
+                if str(word).startswith("--"):
+                    flagWord = str(word[2:]).lower()
+                    if flagWord == "canread": canRead = True
+                    if flagWord == "canwrite": canWrite = True
+                else:
+                    url = word if url is None else url
+            if url is None:
+                message = "Please provide url of relay to add in wss://relay.domain format"
+                sendDirectMessage(npub, message)
+                return
+            url = url if str(url).startswith("wss://") else f"wss://{url}"
+            # transform list if it has strings
+            hasStrings = False
+            newList = []
+            for item in theList:
+                if type(item) is str:
+                    hasStrings = True
+                    newItem = {"url":item, "read": True, "write": True}
+                    newList.append(newItem)
+                if type(item) is dict:
+                    newList.append(item)                   
+            if hasStrings: theList = newList
+            # look for existing relay url in list
+            found = False
+            for item in theList:
+                if type(item) is dict:
+                    if "url" in item and item["url"] == url:
+                        # existing found, update it
+                        found = True
+                        item["read"] = canRead
+                        item["write"] = canWrite
+            # not found, add it
+            if not found:
+                item = {"url": url, "read": canRead, "write": canWrite}
+                theList.append(item)
+            # save changes
+            setNostrFieldForNpub(npub, pluralLower, theList)
+    else:
+        npubConfig = getNpubConfigFile(npub)
+        theList = npubConfig[pluralLower] if pluralLower in npubConfig else []
+    # List
+    idx = 0
+    message = f"{plural}:"
+    if len(theList) > 0:
+        for item in theList:
+            idx += 1
+            desc = ""
+            perm = ""
+            if type(item) is str: desc = f"{item} [rw]"
+            if type(item) is dict:
+                if "url" in item: desc = item["url"]
+                if "read" in item and item["read"]: perm = f"{perm}r"
+                if "write" in item and item["write"]: perm = f"{perm}w"
+                if len(perm) > 0: desc = f"{desc} [{perm}]"
+            message = f"{message}\n{idx}) {desc}"
+    else:
+        message = f"{message}\n\n{singular} list is empty"
+    sendDirectMessage(npub, message)
 
 def handleExcludes(npub, content):
     handleGenericList(npub, content, "Exclude", "Excludes")
@@ -304,10 +391,7 @@ def handleGenericList(npub, content, singular, plural):
     npubConfig = getNpubConfigFile(npub)
     pluralLower = str(plural).lower()
     pluralupper = str(plural).upper()
-    if pluralLower in npubConfig:
-        theList = npubConfig[pluralLower]
-    else:
-        theList = []
+    theList = npubConfig[pluralLower] if pluralLower in npubConfig else []
     words = content.split()
     if len(words) > 1:
         secondWord = str(words[1]).upper()
@@ -546,7 +630,10 @@ def getProfileForNpubFromRelays(subBotNpub=None, lookupNpub=None):
         relays = getNostrRelaysForNpub(subBotNpub)
         localRelayManager = RelayManager()
         for nostrRelay in relays:
-            localRelayManager.add_relay(nostrRelay)
+            if type(nostrRelay) is dict:
+                localRelayManager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
+            if type(nostrRelay) is str:
+                localRelayManager.add_relay(url=nostrRelay)
         localRelayManager.add_subscription(subscription_id, filters)
         localRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
         time.sleep(1.25) # allow the connections to open
@@ -899,7 +986,6 @@ def processEvents(responseEvents, npub, botConfig):
     feesReplyMessage = 20
     feesZapEvent = 20
     fees = None
-    if "fees_mcredit" in config: fees = config["fees_mcredit"]
     if "fees" in config: fees = config["fees"]
     if fees is not None:
         if "replyMessage" in fees: feesReplyMessage = fees["replyMessage"]
@@ -1148,7 +1234,13 @@ def makeZapRequest(botConfig, satsToZap, zapMessage, recipientPubkey, eventId, b
     zapTags = []    
     relaysTagList = []
     relaysTagList.append("relays")
-    relaysTagList.extend(botConfig["relays"])
+    relays = []
+    for relay in botConfig["relays"]:
+        if type(relay) is str:
+            relays.append(relay)
+        if type(relay) is dict:
+            if "url" in relay: relays.append(relay["url"])
+    relaysTagList.extend(relays)
     zapTags.append(relaysTagList)
     zapTags.append(["amount", str(amountMillisatoshi)])
     zapTags.append(["lnurl", bech32lnurl])

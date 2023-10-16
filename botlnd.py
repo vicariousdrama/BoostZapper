@@ -121,8 +121,8 @@ def trackPayment(paymentHash):
     headers = getLNDHeaders()
     status = None
     fee_msat = None
-    response = requests.get(url=url,stream=True,timeout=timeout,proxies=proxies,headers=headers,verify=False)
     try:
+        response = requests.get(url=url,stream=True,timeout=timeout,proxies=proxies,headers=headers,verify=False)
         for raw_response in response.iter_lines():
             json_response = json.loads(raw_response)
             if "result" in json_response: json_response = json_response["result"]
