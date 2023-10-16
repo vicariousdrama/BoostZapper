@@ -1,6 +1,16 @@
 # Bot Commands
 
-Commands for interacting with the bot for purposes of configuring the bot, adding credits, and messaging support.
+User commands for interacting with the bot for purposes of configuring the bot, adding credits, and messaging support.
+
+Follow these steps to get started quickly
+
+1. Define [CONDITIONS](#conditions) for amounts to be zapped based on a phrase found in the content of a user reply, or a message to be sent
+2. Set the message to be included in zaps via [ZAPMESSAGE](#zapmessage-lt-message-to-send-with-zap-gt)
+3. Specify the [EVENT](#event-lt-eventid-gt) to be monitored
+4. Add [CREDITS](#credits-add-lt-amount-gt) to your bot account
+5. Finally, [ENABLE](#enable) the bot.  This step performs some validation and will report any discrepancies
+
+Periodically, you can check your [STATUS](#status).  if the bot runs out of funds, it will send you a direct message information you.
 
 ## HELP
 
@@ -21,7 +31,7 @@ FEES
 
 RELAYS LIST
 
-RELAYS ADD <relay>
+RELAYS ADD <relay> [--canRead] [--canWrite]
 
 RELAYS DELETE <index>
 
@@ -37,7 +47,15 @@ CONDITIONS DELETE <index>
 
 CONDITIONS CLEAR
 
-PROFILE [--name <name>] [--picture <url for profile picture>] [--banner <url for profile banner>] [--description <description of account>]
+EXCLUDES LIST
+
+EXCLUDES ADD <exclude phrase or npub>
+
+EXCLUDES DELETE <index>
+
+EXCLUDES CLEAR
+
+PROFILE [--name <name>] [--picture <url for profile picture>] [--banner <url for profile banner>] [--description <description of account>] [--nip05 <nip05 identity>] [--lud16 <lightning address>]
 
 ZAPMESSAGE <message to send with zap>
 
@@ -97,6 +115,11 @@ Required arguments:
 
 - relay url
 
+Optional arguments:
+
+- --canRead
+- --canWrite
+
 Example command:
 
 ```user
@@ -107,12 +130,30 @@ Example response:
 
 ```bot
 Relays:
-1) wss://nos.lol
-2) wss://relay.nostr.bg
-3) wss://relay.damus.io
-4) wss://nostr.wine
-5) wss://eden.nostr.land
-6) wss://e.nos.lol
+1) wss://nos.lol [rw]
+2) wss://relay.nostr.bg [rw]
+3) wss://relay.damus.io [rw]
+4) wss://nostr.wine [rw]
+5) wss://eden.nostr.land [rw]
+6) wss://e.nos.lol [rw]
+```
+
+Example command for read only relay:
+
+```user
+RELAYS ADD wss://nostr.wine --canRead
+```
+
+Example response:
+
+```bot
+Relays:
+1) wss://nos.lol [rw]
+2) wss://relay.nostr.bg [rw]
+3) wss://relay.damus.io [rw]
+4) wss://nostr.wine [r]
+5) wss://eden.nostr.land [rw]
+6) wss://e.nos.lol [rw]
 ```
 
 ### RELAYS *`DELETE`* &lt;index&gt;
@@ -131,11 +172,11 @@ RELAYS DELETE 2
 Example response:
 ```bot
 Relays:
-1) wss://nos.lol
-2) wss://relay.damus.io
-3) wss://nostr.wine
-4) wss://eden.nostr.land
-5) wss://e.nos.lol
+1) wss://nos.lol [rw]
+2) wss://relay.damus.io [rw]
+3) wss://nostr.wine [r]
+4) wss://eden.nostr.land [rw]
+5) wss://e.nos.lol [rw]
 ```
 
 ### RELAYS *`CLEAR`*
@@ -192,11 +233,13 @@ Optional arguments:
 
 - --requiredPhrase &lt;phrase required&gt;
 - --requiredLength &lt;length required&gt;
+- --requiredRegex &lt;regular expression&gt;
+- --replyMessage &lt;message to create a nostr reply with&gt;
 
 Example command:
 
 ```user
-CONDITIONS ADD --amount 200 --requiredPhrase "#InkblotArt" --requiredLength 30
+CONDITIONS ADD --amount 200 --requiredPhrase #InkblotArt --requiredLength 30
 ```
 
 Example response:
@@ -206,6 +249,17 @@ Conditions:
 1) zap 20 sats if length >= 20 and contains "#InkblotArt"
 2) zap 10 sats if length >= 10
 3) zap 200 sats if length >= 30 and contains "#InkblotArt"
+```
+
+Example command that establishes a condition for reply message
+
+```user
+CONDITIONS ADD --amount 0 --requiredPhrase crab --replyMessage https://cdn.pixabay.com/photo/2014/12/21/23/58/lobster-576487_960_720.png
+```
+
+Example command using regular expression to match #InkblotArt and crab, in any order
+```user
+CONDITIONS ADD --amount 200 --requriedRegex (crab.*#Inkblotart|#InkblotArt.*crab) --replyMessage https://cdn.pixabay.com/photo/2014/12/21/23/58/lobster-576487_960_720.png
 ```
 
 ### CONDITIONS *`UP`* &lt;index&gt;
@@ -271,6 +325,140 @@ Example response:
 Conditions:
 
 Condition list cleared.
+```
+
+## EXCLUDES
+
+The `EXCLUDES` command requires additional arguments to specify option and parameters
+
+These excludes are a list of phrases in user replies or npubs that should be ignored when processing an event.  Think of it as a simple deny-list to blot auto responders or people otherwise abusing the bot.
+
+### EXCLUDES LIST
+
+Reports the exclude values currently configured for the bot for you. 
+
+Example command:
+
+```user
+EXCLUDES LIST
+```
+
+Example response:
+
+```bot
+Excludes:
+1) LayerZero
+2) $ZRO
+3) airdrop
+4) prism
+5) $boost
+6) SHIB
+7) BNB
+8) DOGE
+9) USDC
+10) $PEPE
+```
+
+The number listed in output may be used as the index to delete an exclude as described below.
+
+### EXCLUDES *`ADD`*
+
+Use this command to add a phrase  to the list of those the bot should exclude from responses or zap.
+
+Required arguments:
+
+- exclusion phrase
+
+Example command:
+
+```user
+EXCLUDES ADD Ukraine
+```
+
+Example response:
+
+```bot
+Excludes:
+1) LayerZero
+2) $ZRO
+3) airdrop
+4) prism
+5) $boost
+6) SHIB
+7) BNB
+8) DOGE
+9) USDC
+10) $PEPE
+11) Ukraine
+```
+
+Example command adding an npub to ignore:
+
+```user
+EXCLUDES ADD npub1pzv524j3a0d25zd6cv7a8qd2c74zsqfwmuc3ul2wnq5q96c6cp5qzvatj0
+```
+
+Example response:
+
+```bot
+Excludes:
+1) LayerZero
+2) $ZRO
+3) airdrop
+4) prism
+5) $boost
+6) SHIB
+7) BNB
+8) DOGE
+9) USDC
+10) $PEPE
+11) Ukraine
+12) npub1pzv524j3a0d25zd6cv7a8qd2c74zsqfwmuc3ul2wnq5q96c6cp5qzvatj0
+```
+
+### EXCLUDES *`DELETE`* &lt;index&gt;
+
+Use this command to remove a phrase or npub from the list of those the bot excludes from processing, specifying the index of the phrase as shown in the exclude list.
+
+Required arguments:
+
+- index of exclude phrase or npub to delete
+
+Example command:
+```user
+EXCLUDES DELETE 2
+```
+
+Example response:
+```bot
+Excludes:
+1) LayerZero
+2) airdrop
+3) prism
+4) $boost
+5) SHIB
+6) BNB
+7) DOGE
+8) USDC
+9) $PEPE
+10) Ukraine
+11) npub1pzv524j3a0d25zd6cv7a8qd2c74zsqfwmuc3ul2wnq5q96c6cp5qzvatj0
+```
+
+### EXCLUDES *`CLEAR`*
+
+Use this command to remove all exclusion phrases from the excludes list.
+
+Example command:
+```user
+EXCLUDES CLEAR
+```
+
+Example response:
+```bot
+Excludes:
+
+Excludes list cleared.
 ```
 
 ## PROFILE 

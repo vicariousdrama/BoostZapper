@@ -2,6 +2,7 @@
 from collections import OrderedDict
 import logging
 import random
+import shutil
 import sys
 import time
 import botfiles as files
@@ -33,6 +34,11 @@ if __name__ == '__main__':
 
     # Load server config
     serverConfig = files.getConfig(f"{files.dataFolder}serverconfig.json")
+    if len(serverConfig.keys()) == 0:
+        shutil.copy("sample-serverconfig.json", f"{files.dataFolder}serverconfig.json")
+        logger.info(f"Copied sample-server.config.json to {files.dataFolder}serverconfig.json")
+        logger.info("You will need to modify this file to setup Bot private key and LND connection settings")
+        quit()
     nostr.config = serverConfig["nostr"]
     lnd.config = serverConfig["lnd"]
 
@@ -60,10 +66,8 @@ if __name__ == '__main__':
     unitsBilled = 0
     feeTime864 = 1000
     fees = None
-    if "fees_mcredit" in nostr.config: fees = nostr.config["fees_mcredit"]
     if "fees" in nostr.config: fees = nostr.config["fees"]
-    if fees is not None:
-        if "time864" in fees: feeTime864 = fees["time864"]
+    if fees is not None and "time864" in fees: feeTime864 = fees["time864"]
 
     # Bot loop
     while True:
@@ -134,6 +138,9 @@ if __name__ == '__main__':
                             since = since + 300
                         elif (newsince != since):
                             since = newsince - 300
+                        if since < botConfig["eventCreated"]:
+                            logger.warning("Logic error. Since was being set to a value earlier than eventCreated")
+                            since = botConfig["eventCreated"]
                     nostr.setNostrFieldForNpub(npub, "eventSince", since)
         else:
             enabledBots = nostr.getEnabledBots()
