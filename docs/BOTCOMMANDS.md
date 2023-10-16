@@ -17,6 +17,8 @@ Example response:
 ```bot
 HELP
 
+FEES
+
 RELAYS LIST
 
 RELAYS ADD <relay>
@@ -53,6 +55,10 @@ STATUS
 
 SUPPORT <message to send to support>
 ```
+
+## FEES
+
+The `FEES` command lists the current fee rates for the service
 
 ## RELAYS
 

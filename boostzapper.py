@@ -89,7 +89,7 @@ def listtodict(o):
         return d
 
 def getPubkey2LightningCacheFilename():
-    return f"{dataFolder}lightningIdcache.json"
+    return f"{dataFolder}lightningIdcache1.json"
 
 def loadPubkey2LightningCache():
     filename = getPubkey2LightningCacheFilename()
