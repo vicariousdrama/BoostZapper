@@ -3,7 +3,6 @@ import bech32
 import datetime
 import os
 import sys
-import time
 
 def bech32ToHex(bech32Input):
     hrp, e2 = bech32.bech32_decode(bech32Input)
@@ -54,9 +53,9 @@ def getCommandArg(p):
 
 def getTimes(aDate=None):
     theDate = aDate
-    if aDate is None: theDate = datetime.datetime.utcnow()
-    isoTime = theDate.isoformat(timespec="seconds")
-    secTime = int(time.time())
+    if aDate is None: theDate = datetime.datetime.now() # utcnow()
+    secTime = int(theDate.timestamp())
+    isoTime = theDate.utcfromtimestamp(theDate.timestamp()).isoformat(timespec="seconds")
     return secTime, isoTime    
 
 def makeFolderIfNotExists(path):

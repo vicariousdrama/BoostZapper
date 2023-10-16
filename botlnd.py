@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from urllib3.exceptions import InsecureRequestWarning, ReadTimeoutError
+from urllib3.exceptions import InsecureRequestWarning
 import base64
 import json
 import os

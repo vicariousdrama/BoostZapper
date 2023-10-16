@@ -29,6 +29,22 @@
             "banner": "",
             "lud16": "wearydoor58@walletofsatoshi.com",
             "nip05": ""
+        },
+        "defaultRelays.comment": "The default relays to assign to newly created zapper identities",
+        "defaultRelays": [
+            "wss://nostr.pleb.network",
+            "wss://nostr-pub.wellorder.net",
+            "wss://nostr.mom",
+            "wss://relay.nostr.bg",
+            "wss://relay.damus.io",
+            "wss://nos.lol",
+            "wss://nostr.wine"
+        ],
+        "fees_mcredit.comment": "Fees the service should charge for types of processing",
+        "fees_mcredit": {
+            "replyMessage": 20,
+            "zapEvent": 20,
+            "time864": 1000
         }
     },
     "lnd": {

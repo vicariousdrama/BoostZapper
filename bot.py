@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from collections import OrderedDict
-from datetime import datetime
 import logging
 import random
 import sys
@@ -55,11 +54,20 @@ if __name__ == '__main__':
     sleepGrowth = 1.2
     sleepTime = 1
 
-    lastEventTime = 0
+    jan012020 = 1577836800
+    startTime, _ = utils.getTimes()
+    upTime = 0
+    unitsBilled = 0
+    feeTime864 = 1000
+    fees = None
+    if "fees_mcredit" in nostr.config: fees = nostr.config["fees_mcredit"]
+    if "fees" in nostr.config: fees = nostr.config["fees"]
+    if fees is not None:
+        if "time864" in fees: feeTime864 = fees["time864"]
 
     # Bot loop
     while True:
-        loopStartTime = int(time.time())
+        loopStartTime, _ = utils.getTimes()
 
         # look for command and control messages
         logger.debug("Checking for direct message commands")
@@ -87,32 +95,64 @@ if __name__ == '__main__':
             else:
                 relays = botConfig["relays"]
                 since = -1
-                if "eventSince" not in botConfig:
-                    event = nostr.getEvent(eventHex)
-                    if event is not None: 
-                        since = event.created_at
-                        nostr.setNostrFieldForNpub(npub, "eventSince", since)
-                else:
-                    since = botConfig["eventSince"]
-                if since is None or since == "" or since == -1:
-                    # event not found on relay - disable it
-                    logger.warning(f"Event {eventHex} for {npub} wasn't found on relays")
-                    nostr.sendDirectMessage(npub, "Could not find event on relays")
-                    nostr.handleEnable(npub, False)
-                else:
-                    # until can be up to 2 hours, but not newer then now
-                    until = since + (2 * 60 * 60)
-                    if until > int(time.time()): until = int(time.time())
+                if "eventSince" in botConfig: since = botConfig["eventSince"]
+                if type(since) is not int: since = 0
+                if since < jan012020:
+                    since = 0
+                    if "eventCreated" in botConfig: since = botConfig["eventCreated"]
+                    if type(since) is not int: since = 0
+                    if since == 0:
+                        logger.debug(f"Getting event information for {eventHex}")
+                        event = nostr.getEventByHex(eventHex)
+                        if event is not None: 
+                            since = event.created_at
+                            nostr.setNostrFieldForNpub(npub, "eventCreated", since)
+                            nostr.setNostrFieldForNpub(npub, "eventSince", since)
+                            botConfig["eventCreated"] = since
+                            botConfig["eventSince"] = since
+                        else:
+                            logger.warning(f"Event {eventHex} for {npub} wasn't found on relays")
+                if since > jan012020:
+                    # until can be up to 2 hours later, but not newer then now
+                    until = since + (2*60*60)
+                    currentTime, _ = utils.getTimes()
+                    upToTip = False
+                    if until > currentTime: 
+                        until = currentTime
+                        upToTip = True
                     responseEvents = nostr.getResponseEventsForEvent(eventHex, relays, since, until)
-                    since = nostr.processEvents(responseEvents, npub, botConfig)
+                    newsince = nostr.processEvents(responseEvents, npub, botConfig)
+                    if upToTip:
+                        # restart at beginning to retry historical that may have failed
+                        # to get LN callback info with LN Provider
+                        since = 0
+                        logger.debug(f"Reached the time tip for {eventHex}, rechecking from its posting time")
+                    else:
+                        # if no events in the window just processed, update since
+                        # - add 5 minutes if time is same and less than current time minus 15 minutes
+                        if (newsince == since and since < (currentTime-900)):
+                            since = since + 300
+                        elif (newsince != since):
+                            since = newsince - 300
                     nostr.setNostrFieldForNpub(npub, "eventSince", since)
         else:
             enabledBots = nostr.getEnabledBots()
-
-        # todo: track payments every 15 minutes?
+            # billing by time for enabled bots
+            upTime = loopEndTime - startTime
+            unitsRan = int(upTime / 864)
+            if unitsBilled < unitsRan:
+                unitsToBill = unitsRan - unitsBilled
+                for npub in enabledBots.keys():
+                    balance = ledger.getCreditBalance(npub)
+                    if balance > 0:
+                        secondsBilled = (unitsToBill * 864)
+                        balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
+                    if balance < 0:
+                        nostr.handleEnable(npub, False)
+                unitsBilled += unitsToBill
 
         # sleep if we can
-        loopEndTime = int(time.time())
+        loopEndTime, _ = utils.getTimes()
         noLaterThan = loopStartTime + sleepTime
         if noLaterThan > loopEndTime:
             time2sleep = noLaterThan - loopEndTime

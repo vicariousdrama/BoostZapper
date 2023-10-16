@@ -38,8 +38,7 @@ def getConfig(filename):
 
 def loadInvoices():
     filename = f"{dataFolder}outstandingInvoices.json"
-    if not os.path.exists(filename): return []
-    return loadJsonFile(filename)
+    return loadJsonFile(filename, [])
 
 def saveInvoices(outstandingInvoices):
     filename = f"{dataFolder}outstandingInvoices.json"
