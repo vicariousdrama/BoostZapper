@@ -4,11 +4,12 @@ User commands for interacting with the bot for purposes of configuring the bot, 
 
 Follow these steps to get started quickly
 
-1. Define [CONDITIONS](#conditions) for amounts to be zapped based on a phrase found in the content of a user reply, or a message to be sent
-2. Set the message to be included in zaps via [ZAPMESSAGE](#zapmessage-lt-message-to-send-with-zap-gt)
-3. Specify the [EVENT](#event-lt-eventid-gt) to be monitored
-4. Add [CREDITS](#credits-add-lt-amount-gt) to your bot account
-5. Finally, [ENABLE](#enable) the bot.  This step performs some validation and will report any discrepancies
+1. Using your Nostr Client, send a Direct Message to [Jessica Botzzap](https://nostr.band/npub1jessxt285u469vp2e64ddv8pjzu5ku0v95zel9h43gq4g5hcch9syxlv3r) with NPUB npub1jessxt285u469vp2e64ddv8pjzu5ku0v95zel9h43gq4g5hcch9syxlv3r
+2. Define [CONDITIONS](#conditions) for amounts to be zapped based on a phrase found in the content of a user reply, or a message to be sent
+3. Set the message to be included in zaps via [ZAPMESSAGE](#zapmessage-lt-message-to-send-with-zap-gt)
+4. Specify the [EVENT](#event-lt-eventid-gt) to be monitored
+5. Add [CREDITS](#credits-add-lt-amount-gt) to your bot account
+6. Finally, [ENABLE](#enable) the bot.  This step performs some validation and will report any discrepancies
 
 Periodically, you can check your [STATUS](#status).  if the bot runs out of funds, it will send you a direct message information you.
 
