@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from collections import OrderedDict
+from logging.handlers import RotatingFileHandler
 import logging
 import random
 import shutil
@@ -24,7 +25,9 @@ if __name__ == '__main__':
     stdoutLoggingHandler = logging.StreamHandler(stream=sys.stdout)
     stdoutLoggingHandler.setFormatter(formatter)
     logger.addHandler(stdoutLoggingHandler)
-    fileLoggingHandler = logging.FileHandler(f"{files.logFolder}bot.log")
+    logFile = f"{files.logFolder}bot.log"
+    fileLoggingHandler = RotatingFileHandler(logFile, mode='a', maxBytes=10*1024*1024, 
+                                 backupCount=21, encoding=None, delay=0)
     fileLoggingHandler.setFormatter(formatter)
     logger.addHandler(fileLoggingHandler)
     files.logger = logger
@@ -97,7 +100,6 @@ if __name__ == '__main__':
             if random.randint(1, 100) > 90:
                 nostr.processOutstandingPayments(npub, botConfig)
             else:
-                relays = botConfig["relays"]
                 since = -1
                 if "eventSince" in botConfig: since = botConfig["eventSince"]
                 if type(since) is not int: since = 0
@@ -124,7 +126,7 @@ if __name__ == '__main__':
                     if until > currentTime: 
                         until = currentTime
                         upToTip = True
-                    responseEvents = nostr.getResponseEventsForEvent(eventHex, relays, since, until)
+                    responseEvents = nostr.getResponseEventsForEvent(eventHex, since, until)
                     newsince = nostr.processEvents(responseEvents, npub, botConfig)
                     if upToTip:
                         # restart at beginning to retry historical that may have failed

@@ -40,7 +40,7 @@ RELAYS CLEAR
 
 CONDITIONS LIST
 
-CONDITIONS ADD [--amount <zap amount if matched>] [--requiredLength <length required to match>] [--requiredPhrase <phrase required to match>] [--requiredRegex <regular expression to match>] [--replyMessage <message to reply with if matched>]
+CONDITIONS ADD [--amount <zap amount if matched>] [--randomWinnerLimit <number of random winners of this amount for the event>] [--requiredLength <length required to match>] [--requiredPhrase <phrase required to match>] [--requiredRegex <regular expression to match>] [--replyMessage <message to reply with if matched>]
 
 CONDITIONS UP <index>
 
@@ -61,6 +61,8 @@ PROFILE [--name <name>] [--picture <url for profile picture>] [--banner <url for
 ZAPMESSAGE <message to send with zap>
 
 EVENT <event identifier>
+
+EVENTBUDGET <max to pay in total per event>
 
 BALANCE
 
@@ -224,7 +226,7 @@ The number listed in output may be used as the index to delete a condition as de
 
 ### CONDITIONS *`ADD`*
 
-Use this command to add a condition to the list of those the bot should use.  
+Use this command to add a condition to the list of those the bot should use.  You can define multiple conditions and use the CONDITIONS UP operation described below to control the order condition definitions are checked.
 
 Required arguments:
 
@@ -232,6 +234,7 @@ Required arguments:
 
 Optional arguments:
 
+- --randomWinnerLimit &lt;number of random winners of the amount for the event&gt;
 - --requiredPhrase &lt;phrase required&gt;
 - --requiredLength &lt;length required&gt;
 - --requiredRegex &lt;regular expression&gt;
@@ -261,6 +264,19 @@ CONDITIONS ADD --amount 0 --requiredPhrase crab --replyMessage https://cdn.pixab
 Example command using regular expression to match #InkblotArt and crab, in any order
 ```user
 CONDITIONS ADD --amount 200 --requriedRegex (crab.*#Inkblotart|#InkblotArt.*crab) --replyMessage https://cdn.pixabay.com/photo/2014/12/21/23/58/lobster-576487_960_720.png
+```
+
+Example command that adds a random winner limit.  While the event is being monitored up to 3 randomly selected people will be awarded 210 if their reply to the event contains the phrase 'Not your keys not your coin'.  Winners are selected randomly with a 1% chance of being chosen. Once the limit has been reached no more winners for the condition are selected.
+```user
+CONDITIONS ADD --amount 210 --randomWinnerLimit 3 --requiredPhrase Not your keys not your coin
+```
+
+The following commands results in a series of conditions that will zap 210 sats to up to 2 randomly chosen respondants whose reply contains "#InkblotArt", while others get 5 sats
+
+```user
+CONDITIONS ADD --amount 210 --randomWinnerLimit 2 --requiredPhrase #InkblotArt --requiredLength 20
+CONDITIONS ADD --amount 5 --requiredPhrase #InkblotArt --requiredLength 20
+CONDITIONS ADD --amount 1 --requiredPhrase #InkblotArt --requiredLength 1
 ```
 
 ### CONDITIONS *`UP`* &lt;index&gt;
@@ -538,6 +554,41 @@ EVENT 0
 Example response:
 ```bot
 No longer monitoring an event
+```
+
+## EVENTBUDGET &lt;max to pay in total per event&gt;
+
+The `EVENTBUDGET` command can help constrain overall payouts. This is a convenient way
+to limit the total amount of credits spent for a defined event.  The default value of 0 indicates that there is no limit.
+
+Example command:
+
+```user
+EVENTBUDGET 5000
+```
+
+Example response:
+
+```bot
+The budget for the event has been set to 5000. 2121 credits have been used to date for the event, leaving 2879 remaining. Your account balance is 51223.
+```
+
+If the budget has already been exceeded:
+
+```bot
+The budget for the event has been set to 5000. 6102 credits have been used to date for the event. Zaps and replies for this event will not be performed. Your account balance is 51223.
+```
+
+Example command:
+
+```user
+EVENTBUDGET 0
+```
+
+Example response:
+
+```bot
+The budget for the event has been set to unlimited. 2121 credits have been used to date for the event. Your account balance is 51223.
 ```
 
 ## BALANCE

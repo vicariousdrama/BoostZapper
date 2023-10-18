@@ -8,9 +8,12 @@ def bech32ToHex(bech32Input):
     hrp, e2 = bech32.bech32_decode(bech32Input)
     if hrp is None: return ""
     tlv_bytes = bech32.convertbits(e2, 5, 8)[:-1]
-    tlv_length = tlv_bytes[1]
-    tlv_value = tlv_bytes[2:tlv_length+2]
-    hexOutput = bytes(tlv_value).hex()
+    if len(tlv_bytes) > 32:
+        tlv_length = tlv_bytes[1]
+        tlv_value = tlv_bytes[2:tlv_length+2]
+        hexOutput = bytes(tlv_value).hex()
+    else:
+        hexOutput = bytes(tlv_bytes).hex()
     return hexOutput
 
 def hexToBech32(hexInput, hrp):
