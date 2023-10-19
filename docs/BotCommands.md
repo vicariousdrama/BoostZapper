@@ -64,6 +64,8 @@ EVENT <event identifier>
 
 EVENTBUDGET <max to pay in total per event>
 
+EVENTAUTOCHANGE <phrase>
+
 BALANCE
 
 CREDITS ADD <amount>
@@ -589,6 +591,34 @@ Example response:
 
 ```bot
 The budget for the event has been set to unlimited. 2121 credits have been used to date for the event. Your account balance is 51223.
+```
+
+## EVENTAUTOCHANGE &lt;phrase&gt;
+
+Set a phrase for which the bot should change which event it is monitoring for you whenever you post a new note containing that phrase.
+
+Example Command: 
+
+```user
+EVENTAUTOCHANGE #Nodeyez
+```
+
+Example Response:
+
+```bot
+Whenever you create a new post with the phrase '#Nodeyez', the bot will change to monitoring that post
+```
+
+Example Command that turns off this feature
+
+```user
+EVENTAUTOCHANGE
+```
+
+Example Response
+
+```bot
+No longer automatically changing event to monitor based on your posts
 ```
 
 ## BALANCE

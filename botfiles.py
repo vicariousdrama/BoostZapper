@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import shutil
 import botutils as utils
 
 logger = None       # set by calling setLogger
@@ -24,8 +25,12 @@ def loadJsonFile(filename, default=None):
         return(json.load(f))
 
 def saveJsonFile(filename, obj):
-    with open(filename, "w") as f:
+    # first as temp file
+    tempfile = f"{filename}.tmp"
+    with open(tempfile, "w") as f:
         f.write(json.dumps(obj=obj,indent=2))
+    # then move over top
+    shutil.move(tempfile, filename)
 
 def getConfig(filename):
     c = utils.getCommandArg("config") # allow overriding default filename
