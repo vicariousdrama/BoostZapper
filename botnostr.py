@@ -25,6 +25,7 @@ botRelayManager = None
 handledEvents = {}
 
 def connectToRelays():
+    logger.debug("Connecting to relays")
     global botRelayManager
     botRelayManager = RelayManager()
     relays = getNostrRelaysFromConfig(config)
@@ -34,6 +35,15 @@ def connectToRelays():
         if type(nostrRelay) is str:
             botRelayManager.add_relay(url=nostrRelay)
     botRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE})
+
+def disconnectRelays():
+    logger.debug("Disconnecting from relays")
+    global botRelayManager
+    botRelayManager.close_connections()
+
+def reconnectRelays():
+    disconnectRelays()
+    connectToRelays()
 
 def getNpubConfigFilename(npub):
     return f"{files.userConfigFolder}{npub}.json"
@@ -87,13 +97,15 @@ def sendDirectMessage(npub, message):
     botRelayManager.publish_event(dm)
 
 def removeSubscription(relaymanager, subid):
+    request = [ClientMessageType.CLOSE, subid]
+    message = json.dumps(request)
+    relaymanager.publish_message(message)
     # relaymanager.close_subscription(subid)
     # temp workaround to faulty logi in nostr/relay.py#103 for close_subscription
     for relay in relaymanager.relays.values():
         if subid in relay.subscriptions.keys():
             with relay.lock:
                 relay.subscriptions.pop(subid)
-
 
 def checkDirectMessages():
     global handledMessages          # tracked in this file, and only this function
@@ -111,26 +123,13 @@ def checkDirectMessages():
             stillGood[k] = v
     handledMessages = stillGood
     # setup filter to retrieve direct messages sent to us
-    filters = Filters([Filter(
-        since=since,
-        pubkey_refs=[botPubkey],
-        kinds=[EventKind.ENCRYPTED_DIRECT_MESSAGE]
-        )])
-    subscription_id = f"inbox-{since}"
-    request = [ClientMessageType.REQUEST, subscription_id]
-    request.extend(filters.to_json_array())
-    botRelayManager.add_subscription(subscription_id, filters)
-    message = json.dumps(request)
-    botRelayManager.publish_message(message)
-    time.sleep(1) # allow the messages to send
-    # wait for events to return, gather and close
-    while botRelayManager.message_pool.has_events():
-        event_msg = botRelayManager.message_pool.get_event()
+    filters = Filters([Filter(since=since,pubkey_refs=[botPubkey],kinds=[EventKind.ENCRYPTED_DIRECT_MESSAGE])])
+    events = getNostrEvents(filters)
+    for event in events:
         # only add those not already in the handledMessages list
-        if event_msg.event.id not in handledMessages:
-            newMessages.append(event_msg)
-            handledMessages[event_msg.event.id] = event_msg.event.created_at
-    removeSubscription(botRelayManager, subscription_id)
+        if event.id not in handledMessages:
+            newMessages.append(event)
+            handledMessages[event.id] = event.created_at
     return newMessages
 
 def isValidSignature(event): 
@@ -142,11 +141,11 @@ def isValidSignature(event):
 
 def processDirectMessages(messages):
     botPK = getBotPrivateKey()
-    for message in messages:
-        if not isValidSignature(message.event): continue
-        publisherHex = str(message.event.public_key).strip()
+    for event in messages:
+        if not isValidSignature(event): continue
+        publisherHex = str(event.public_key).strip()
         npub = PublicKey(raw_bytes=bytes.fromhex(publisherHex)).bech32()
-        content = str(message.event.content).strip()
+        content = str(event.content).strip()
         content = botPK.decrypt_message(content, publisherHex)
         logger.debug(f"{npub} command via DM: {content}")
         firstWord = content.split()[0].upper()
@@ -168,6 +167,8 @@ def processDirectMessages(messages):
             handleEvent(npub, content)
         elif firstWord == "EVENTBUDGET":
             handleEventBudget(npub, content)
+        elif firstWord == "EVENTAUTOCHANGE":
+            handleEventAutoChange(npub, content)
         elif firstWord == "BALANCE":
             handleBalance(npub, content)
         elif firstWord == "CREDITS":
@@ -230,6 +231,10 @@ def handleHelp(npub, content):
             message = "Set a limit to be spent on the current event"
             message = f"{message}\nEVENTBUDGET 21000"
             handled = True
+        elif secondWord == "EVENTAUTOCHANGE":
+            message = "Set a phrase that should trigger changing the event being monitored"
+            message = f"{message}\nEVENTAUTOCHANGE <phrase>"
+            handled = True
         elif secondWord == "BALANCE":
             message = "Get the balance of credits for your bot."
             handled = True
@@ -252,8 +257,9 @@ def handleHelp(npub, content):
             message = f"{message}\nSUPPORT <message to send to support>"
             handled = True
     if not handled:
-        message = "This bot can zap responses to an event you set with conditions. To get detailed help, issue the subcommand after the HELP option (e.g. HELP RELAYS)."
-        message = f"{message}\nCommands: FEES, RELAYS, CONDITIONS, PROFILE, ZAPMESSAGE, EVENT, EVENTBUDGET, BALANCE, CREDITS, ENABLE, DISABLE, STATUS, SUPPORT"
+        message = "This bot zaps responses to events based on rules you define. For detailed help, reply HELP followed by the command (e.g. HELP RELAYS)."
+        message = f"{message}\nCommands: FEES, RELAYS, CONDITIONS, PROFILE, ZAPMESSAGE, EVENT, EVENTBUDGET, EVENTAUTOCHANGE, BALANCE, CREDITS, ENABLE, DISABLE, STATUS, SUPPORT"
+        message = f"{message}\n\nTo get started setting up a bot, define one or more CONDITIONS, provide a ZAPMESSAGE, and indicate the EVENT to monitor."
     sendDirectMessage(npub, message)
 
 def getNostrFieldForNpub(npub, fieldname):
@@ -652,52 +658,36 @@ def handleProfile(npub, content):
             message = f"{message}\n{k}: {v1}"
     sendDirectMessage(npub, message)
 
+def makeRelayManager(npub):
+    relays = getNostrRelaysForNpub(npub)
+    aRelayManager = RelayManager()
+    for nostrRelay in relays:
+        if type(nostrRelay) is dict:
+            aRelayManager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
+        if type(nostrRelay) is str:
+            aRelayManager.add_relay(url=nostrRelay)
+    aRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
+    return aRelayManager
+
 def getProfileForNpubFromRelays(subBotNpub=None, lookupNpub=None):
     relayProfile = {}
     if lookupNpub is None: return None
-    # filter setup
     filters = Filters([Filter(kinds=[EventKind.SET_METADATA],authors=[lookupNpub])])
-    t, _ = utils.getTimes()
-    subscription_id = f"profile-{lookupNpub[0:4]}..{lookupNpub[-4:]}-{t}"
-    request = [ClientMessageType.REQUEST, subscription_id]
-    request.extend(filters.to_json_array())
-    message = json.dumps(request)
-    relayManager = None
-    if subBotNpub is None:
-        # use botRelayManager
-        relayManager = botRelayManager
-    else:
-        # set localRelayManager
-        # -- bots for npubs can have their own relays
-        relays = getNostrRelaysForNpub(subBotNpub)
-        localRelayManager = RelayManager()
-        for nostrRelay in relays:
-            if type(nostrRelay) is dict:
-                localRelayManager.add_relay(url=nostrRelay["url"],read=nostrRelay["read"],write=nostrRelay["write"])
-            if type(nostrRelay) is str:
-                localRelayManager.add_relay(url=nostrRelay)
-        localRelayManager.add_subscription(subscription_id, filters)
-        localRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
-        time.sleep(1.25) # allow the connections to open
-        relayManager = localRelayManager
-    relayManager.add_subscription(subscription_id, filters)
-    relayManager.publish_message(message)
-    time.sleep(1) # allow the messages to send
+    theRelayManager = None
+    if subBotNpub is not None: theRelayManager = makeRelayManager(subBotNpub)
+    events = getNostrEvents(filters, theRelayManager)
+    if subBotNpub is not None: theRelayManager.close_connections()
     # look over returned events
     created_at = 0
-    while relayManager.message_pool.has_events():
-        event_msg = relayManager.message_pool.get_event()
-        if event_msg.event.created_at < created_at: continue
-        if not isValidSignature(event_msg.event): continue
+    for event in events:
+        if event.created_at < created_at: continue
+        if not isValidSignature(event): continue
         try:
-            ec = json.loads(event_msg.event.content)
-            created_at = event_msg.event.created_at
+            ec = json.loads(event.content)
+            created_at = event.created_at
             relayProfile = dict(ec)
         except Exception as err:
             continue
-    removeSubscription(relayManager, subscription_id)
-    if subBotNpub is not None:
-        localRelayManager.close_connections()
     return relayProfile
 
 def checkBotProfile():
@@ -768,6 +758,16 @@ def handleZapMessage(npub, content):
         message = f"The zap message has not yet been set. Specify the message as follows\n\nZAPMESSAGE Comment to send with zaps"
     sendDirectMessage(npub, message)
 
+def handleEventAutoChange(npub, content):
+    words = str(content).strip().split()
+    newAutoChange = " ".join(words[1:]) if len(words) > 1 else None
+    setNostrFieldForNpub(npub, "eventAutoChange", newAutoChange)
+    if newAutoChange is None:
+        message = "No longer automatically changing event to monitor based on your posts"
+    else:
+        message = f"Whenever you create a new post with the phrase '{newAutoChange}', the bot will change to monitoring that post"
+    sendDirectMessage(npub, message)
+
 def handleEventBudget(npub, content):
     eventId = getNostrFieldForNpub(npub, "eventId")
     budgetWord = getNostrFieldForNpub(npub, "eventBudget")
@@ -826,8 +826,8 @@ def handleEvent(npub, content):
     if newEventId is None or len(newEventId) == 0:
         message = "No longer monitoring an event"
     else:
-        shortbech32 = newEventId[0:12] + ".." + newEventId[-6:]
-        message = f"Now monitoring event {shortbech32} ({newEventId})"
+        #shortbech32 = newEventId[0:12] + ".." + newEventId[-6:]
+        message = f"Now monitoring event {newEventId}"
     sendDirectMessage(npub, message)
 
 def getEventSpentSoFar(npub, eventId):
@@ -1051,7 +1051,7 @@ def handleSupport(npub, content):
             sendDirectMessage(npub, message)
 
 def getEnabledBots():
-    logger.debug("Checking bots for events")
+    logger.debug("Populating list of enabled bots")
     enabledBots = OrderedDict()
     botConfigs = files.listUserConfigs()
     for botConfigFile in botConfigs:
@@ -1064,6 +1064,28 @@ def getEnabledBots():
         botConfig = files.loadJsonFile(filename)
         if "enabled" not in botConfig: continue
         if botConfig["enabled"]: 
+            if (random.randint(1, 5) <= 1) and ("eventAutoChange" in botConfig):
+                eacPhrase = botConfig["eventAutoChange"]
+                newEvent = getNewEventWithPhraseByNpub(npub, eacPhrase)
+                if newEvent is not None: 
+                    changeEvent = True
+                    newId = utils.normalizeToBech32(newEvent.id, "note")
+                    eventCreated = newEvent.created_at
+                    eventSince = eventCreated
+                    if "eventId" in botConfig: 
+                        oldId = utils.normalizeToBech32(utils.normalizeToHex(botConfig["eventId"]),"note")
+                        if oldId == newId: changeEvent = False
+                    if changeEvent:
+                        setNostrFieldForNpub(npub, "eventId", newId)
+                        botConfig["eventId"] = newId
+                        setNostrFieldForNpub(npub, "eventCreated", eventCreated)
+                        botConfig["eventCreated"] = eventCreated
+                        setNostrFieldForNpub(npub, "eventSince", eventSince)
+                        botConfig["eventSince"] = eventSince
+                        if "eventBudget" in botConfig:
+                            eventBalance = botConfig["eventBudget"]
+                            setNostrFieldForNpub(npub, "eventBalance", eventBalance)
+                            botConfig["eventBalance"] = eventBalance
             if "eventId" not in botConfig: continue
             eventId = botConfig["eventId"]
             eventIdhex = utils.normalizeToHex(eventId)
@@ -1074,52 +1096,71 @@ def getEnabledBots():
     return enabledBots
 
 def getEventByHex(eventHex):
-    filters = Filters([Filter(
-        event_ids=[eventHex]
-    )])
-    subscription_id = f"event-{eventHex[0:4]}..{eventHex[-4:]}"
+    filters = Filters([Filter(event_ids=[eventHex])])
+    events = getNostrEvents(filters)
+    if len(events) > 0: return events[0]
+    return None
+
+def getNewEventWithPhraseByNpub(npub, eacPhrase):
+    authorhex = utils.normalizeToHex(npub)
+    until, _ = utils.getTimes()
+    since = until - (3*60*60)
+    filters = Filters([Filter(since=since,until=until,authors=[authorhex], kinds=[EventKind.TEXT_NOTE])])
+    events = getNostrEvents(filters)
+    created_at = 0
+    newestEvent = None
+    for event in events:
+        if not isValidSignature(event): continue
+        if event.created_at <= created_at: continue
+        if str(eacPhrase).lower() in str(event.content).lower():
+            newestEvent = event
+            created_at = event.created_at
+    return newestEvent
+
+_nostrEventSubscriptionsMade = 0
+def getNostrEvents(filters, customRelayManager=None):
+    global _nostrEventSubscriptionsMade
+    t, _ = utils.getTimes()
+    subscription_id = f"t{t}"
     request = [ClientMessageType.REQUEST, subscription_id]
     request.extend(filters.to_json_array())
-    botRelayManager.add_subscription(subscription_id, filters)
     message = json.dumps(request)
-    botRelayManager.publish_message(message)
+    theRelayManager = botRelayManager
+    if customRelayManager is not None: theRelayManager = customRelayManager
+    theRelayManager.add_subscription(subscription_id, filters)
+    theRelayManager.publish_message(message)
+    _nostrEventSubscriptionsMade += 1
     time.sleep(1)
-    eventToReturn = None
-    while botRelayManager.message_pool.has_events():
-        event_msg = botRelayManager.message_pool.get_event()
-        eventToReturn = event_msg.event
-    removeSubscription(botRelayManager, subscription_id)
-    return eventToReturn
+    events = []
+    while theRelayManager.message_pool.has_events():
+        event_msg = theRelayManager.message_pool.get_event()
+        events.append(event_msg.event)
+    while theRelayManager.message_pool.has_eose_notices():
+        eose_msg = theRelayManager.message_pool.get_eose_notice()
+    removeSubscription(theRelayManager, subscription_id)
+    return events
 
 def getResponseEventsForEvent(eventHex, since, until):
-    logger.debug(f"Checking for responses to event {eventHex} created from {since} to {until}")
-    # filter setup
-    filters = Filters([Filter(
-        since=since,
-        until=until,
-        event_refs=[eventHex],
-        kinds=[EventKind.TEXT_NOTE]
-    )])
-    subscription_id = f"refs-{since}-{eventHex[0:4]}..{eventHex[-4:]}"
-    request = [ClientMessageType.REQUEST, subscription_id]
-    request.extend(filters.to_json_array())
-    botRelayManager.add_subscription(subscription_id, filters)
-    message = json.dumps(request)
-    botRelayManager.publish_message(message)
-    time.sleep(1)
-    matchingEvents = []
-    while botRelayManager.message_pool.has_events():
-        event_msg = botRelayManager.message_pool.get_event()
-        matchingEvents.append(event_msg.event)
-    removeSubscription(botRelayManager, subscription_id)
-    return matchingEvents
+    isoSince = datetime.utcfromtimestamp(since).isoformat(timespec="seconds")
+    isoUntil = datetime.utcfromtimestamp(until).isoformat(timespec="seconds")
+    logger.debug(f"Checking for responses to event {eventHex} created from {isoSince} to {isoUntil}")
+    filters = Filters([Filter(since=since,until=until,event_refs=[eventHex],kinds=[EventKind.TEXT_NOTE])])
+    events = getNostrEvents(filters)
+    return events
 
-def getListFieldCount(list, fieldname):
+def getListFieldCount(list, fieldname, value=None):
     count = 0
     for item in list:
+        if type(list) is dict:
+            v = list[item]
+            if type(v) is dict:
+                if fieldname in v:
+                    if value is None: count = count + 1
+                    elif v[fieldname] == value: count = count + 1
         if type(item) is dict:
             if fieldname in item:
-                count = count + 1
+                if value is None: count = count + 1
+                elif item[fieldname] == value: count = count + 1
         if isinstance(item, type([])):
             if fieldname in item:
                 count = count + 1
@@ -1151,7 +1192,7 @@ def processEvents(responseEvents, npub, botConfig):
     paidnpubs = files.loadJsonFile(filePaidNpubs, {})       # event.public_key, amount
     paidluds = files.loadJsonFile(filePaidLuds, {})         # lud16, amount
     replies = files.loadJsonFile(fileReplies, [])           # event.id
-    randomWinnerCount = getListFieldCount(paidnpubs, "randomWinner")
+    randomWinnerCount = getListFieldCount(paidnpubs, "randomWinner", True)
     # event budget and balance
     eventbudget = botConfig["eventBudget"] if "eventBudget" in botConfig else 0
     if "eventBalance" in botConfig:
@@ -1162,7 +1203,8 @@ def processEvents(responseEvents, npub, botConfig):
         else:
             eventbalance = float(balance)
     # tracking
-    newest = botConfig["eventSince"]
+    newest = botConfig["eventSince"] if "eventSince" in botConfig else 0
+    newest = botConfig["eventCreated"] if "eventCreated" in botConfig else newest
     # sort chronologically by created_at, (oldest to newest)
     sortedEvents = sorted(responseEvents, key=lambda x: x.created_at)
     # iterate events to find those matching conditions
@@ -1170,23 +1212,34 @@ def processEvents(responseEvents, npub, botConfig):
     eventsToReply = {}        # k = evt.id, v = public_key, message
     for evt in sortedEvents: #response in sortedEvents:
         #evt = Event(response)
-        if not isValidSignature(evt): continue
+        if not isValidSignature(evt): 
+            logger.debug("- skipping response with invalid signature")
+            continue
         created_at = evt.created_at
         pubkey = evt.public_key
         responseId = evt.id
         content = evt.content
         if created_at > newest: newest = created_at
-        if getListFieldCount(evt.tags, 'e') != 1: continue # only process top level responses, not nested
-        if pubkey in excludes: continue
-        if responseId in responses: continue # handled previously, skip
+        if getListFieldCount(evt.tags, 'e') != 1: 
+            logger.debug("- skipping response referencing more than this event")
+            continue # only process top level responses, not nested
+        if pubkey in excludes: 
+            logger.debug(f"- skipping pubkey {pubkey} in excludes list")
+            continue
+        if responseId in responses: 
+            logger.debug(f"- skipping response {responseId} that was previously handled")
+            continue # handled previously, skip
         if pubkey not in participants: participants.append(pubkey)
         # check excludes against content
         excluded = False
         for exclude in excludes:
-            if exclude in content: 
+            if str(exclude).lower() in str(content).lower(): 
                 excluded = True
                 break
-        if excluded: continue
+        if excluded: 
+            logger.debug(f"- skipping response content that should be excluded")
+            logger.debug(f"{content}")
+            continue
         # check conditions
         foundMessage = False
         foundAmount = False
@@ -1208,11 +1261,13 @@ def processEvents(responseEvents, npub, botConfig):
                 if not re.search(pattern=requiredRegex, string=content, flags=re.IGNORECASE): continue
             if "randomWinnerLimit" in condition:
                 randomWinnerLimit = condition["randomWinnerLimit"]
-                if randomWinnerLimit <= randomWinnerCount: continue # hit threshold of this random payout
-                oddsimprover = len(paidnpubs) % 100
-                random100 = random.randint(1,(100 * (randomWinnerCount + 1)))
-                if random100 >= oddsimprover: continue # 1% chance
-                foundRandomWinner = True
+                if randomWinnerCount >= randomWinnerLimit: continue # hit threshold of this random payout
+                randomValue = random.randint(1, 100 * randomWinnerLimit)
+                if randomValue <= (randomWinnerLimit - randomWinnerCount):
+                    foundRandomWinner = True
+                else:
+                    replyMessage = None
+                    continue
             # conditional checks passed, now decide actions
             if not foundMessage:
                 if replyMessage is not None:
@@ -1227,6 +1282,8 @@ def processEvents(responseEvents, npub, botConfig):
                         candidateEventsToZap[responseId] = {"public_key": pubkey, "amount": amount, "replyContent":content, "randomWinner": foundRandomWinner}
                         if foundRandomWinner: randomWinnerCount += 1
                         foundAmount = True
+        if not foundAmount:
+            logger.debug(f"- skipping response from {pubkey} that didnt meet conditions. content: {content}")
     # save participants so far
     files.saveJsonFile(fileParticipants, participants)
     # reduce eventsToZap to max amount per pubkey in this set
@@ -1248,9 +1305,13 @@ def processEvents(responseEvents, npub, botConfig):
     pk = PrivateKey().from_nsec(botConfig["profile"]["nsec"])
     for k, v in eventsToReply.items():
         # ensure adequate funds overall
-        if balance < 1: break
+        if balance < 1: 
+            logger.debug("Account balance to low to send reply")
+            break
         # ensure adequate funds for event
-        if eventbudget > 0 and eventbalance < (float(feesReplyMessage)/float(1000)): break
+        if eventbudget > 0 and eventbalance < (float(feesReplyMessage)/float(1000)): 
+            logger.debug("Event Budget too low to send reply")
+            break
         pubkey = v["public_key"]
         if k not in responses: responses.append(k)
         replyTags = [["e", k]]  # eventid being replied to
@@ -1269,9 +1330,13 @@ def processEvents(responseEvents, npub, botConfig):
         amountNeeded = (amount + lnd.config["feeLimit"])
         isRandomWinner = v["randomWinner"]
         # ensure adequate funds overall
-        if balance < amountNeeded: continue
+        if balance < amountNeeded: 
+            logger.debug("Account balance too low to zap user")
+            continue
         # ensure adequate funds for event
-        if eventbudget > 0 and eventbalance < amountNeeded: continue
+        if eventbudget > 0 and eventbalance < amountNeeded: 
+            logger.debug("Event Budget too low to zap user")
+            continue
         if k not in responses: responses.append(k)
         # get lightning id
         lightningId = getLightningIdForPubkey(pubkey)
@@ -1336,37 +1401,41 @@ def getLightningIdForPubkey(public_key):
     # look in cache for id set within past day
     for k, v in lightningIdCache.items():
         if k != public_key: continue
-        if type(v) is dict:
-            if "lightningId" not in v: continue
-            if "created_at" in v:
-                if v["created_at"] > t - 86400:
-                    lightningId = v["lightningId"]
-                    return lightningId
+        if type(v) is not dict: continue
+        if "lightningId" not in v: continue
+        if "created_at" not in v: continue
+        if v["created_at"] > t - 86400: return v["lightningId"]
     # filter setup
     filters = Filters([Filter(kinds=[EventKind.SET_METADATA],authors=[public_key])])
-    subscription_id = f"profile-{public_key[0:4]}..{public_key[-4:]}-{t}"
-    botRelayManager.add_subscription(subscription_id, filters)
-    request = [ClientMessageType.REQUEST, subscription_id]
-    request.extend(filters.to_json_array())
-    message = json.dumps(request)
-    botRelayManager.publish_message(message)
-    time.sleep(1) # allow the messages to send
+    events = getNostrEvents(filters)
     # look over returned events, returning newest lightning Id
     created_at = 0
-    while botRelayManager.message_pool.has_events():
-        event_msg = botRelayManager.message_pool.get_event()
+    for event in events:
         try:
-            ec = json.loads(event_msg.event.content)
+            ec = json.loads(event.content)
         except Exception as err:
             continue
-        if not isValidSignature(event_msg.event): continue
-        if event_msg.event.created_at <= created_at: continue
+        if not isValidSignature(event): continue
+        if event.created_at <= created_at: continue
+        created_at = event.created_at
         name = ec["name"] if ("name" in ec and ec["name"] is not None) else "no name"
+        if "lud06" in ec and ec["lud06"] is not None:
+            lnurl = ec["lud06"]
+            if str(lnurl).startswith("lnurl"):
+                try:
+                    du = bytes.fromhex(utils.bech32ToHex(lnurl)).decode('ASCII')
+                    # 'tps://walletofsatoshi.com/.well-known/lnurlp/myhamster67'
+                    du = du.split("//")[1]
+                    domainpart = du.split("/")[0]
+                    usernamepart = du.split("/")[-1]
+                    lightningId = f"{usernamepart}@{domainpart}"
+                    logger.debug(f"Decoded {lightningId} from lnurl in lud06")
+                    lightningIdCache[public_key] = {"lightningId": lightningId, "name":name, "created_at": created_at}
+                except Exception as err:
+                    pass
         if "lud16" in ec and ec["lud16"] is not None: 
-            lightningId = ec["lud16"]
-            created_at = event_msg.event.created_at
+            lightningId = ec["lud16"]            
             lightningIdCache[public_key] = {"lightningId": lightningId, "name":name, "created_at": created_at}
-    removeSubscription(botRelayManager, subscription_id)
     if lightningId is not None: saveLightningIdCache()
     return lightningId
 
