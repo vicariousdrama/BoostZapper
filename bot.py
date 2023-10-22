@@ -13,8 +13,90 @@ import botlnurl as lnurl
 import botnostr as nostr
 import botutils as utils
 
-def runBoostZapper():
-    pass
+def processBots():
+    global enabledBots
+    global foundTracker
+    global unitsBilled
+    if len(enabledBots.keys()) > 0:
+        npub, eventHex = enabledBots.popitem(last=False)
+        botConfig = nostr.getNpubConfigFile(npub)
+        if random.randint(1, 100) <= 5:
+            # check outstanding payments status
+            nostr.processOutstandingPayments(npub, botConfig)
+        since = -1
+        if "eventSince" in botConfig: since = botConfig["eventSince"]
+        if type(since) is not int: since = 0
+        if since < jan012020:
+            since = 0
+            if "eventCreated" in botConfig: since = botConfig["eventCreated"]
+            if type(since) is not int: since = 0
+            if since == 0:
+                event = nostr.getEventByHex(npub, eventHex)
+                if event is not None: 
+                    since = event.created_at
+                    nostr.setNostrFieldForNpub(npub, "eventCreated", since)
+                    nostr.setNostrFieldForNpub(npub, "eventSince", since)
+                    botConfig["eventCreated"] = since
+                    botConfig["eventSince"] = since
+                else:
+                    opnpub = nostr.getOperatorNpub()
+                    message = f"Event {eventHex} for {npub} wasn't found on relays"
+                    if opnpub is not None and opnpub == npub:
+                        nostr.sendDirectMessage(npub, message)
+                    logger.warning()
+        if since > jan012020:
+            until = since + timeChunk
+            currentTime, _ = utils.getTimes()
+            upToTip = (until > currentTime)
+            until = currentTime if upToTip else until
+            responseEvents = nostr.getResponseEventsForEvent(npub, eventHex, since, until)
+            newEventsCount = len(responseEvents)
+            npubStats = foundTracker[npub] if npub in foundTracker else {"replies":0,"checks":0}
+            npubStats["replies"] = npubStats["replies"] + newEventsCount
+            npubStats["checks"] = npubStats["checks"] + 1
+            logger.debug(f"Found {newEventsCount} events")
+            newsince = nostr.processEvents(npub, responseEvents, botConfig)
+            if upToTip:
+                # restart at beginning to retry historical that may have failed
+                # to get LN callback info with LN Provider
+                since = botConfig["eventCreated"]
+                npubStats["replies"] = 0
+                npubStats["checks"] = 0
+                logger.debug(f"Reached current time for {eventHex}, rechecking from posting time ({since})")
+            else:
+                # by default, bump the time chunk (2 hours)
+                since = since + timeChunk
+            foundTracker[npub] = npubStats
+            nostr.setNostrFieldForNpub(npub, "eventSince", since)
+    
+    # When all bots processed
+    if len(enabledBots.keys()) == 0:
+        # Repopulate the list of enabled bots
+        enabledBots = nostr.getEnabledBots()
+        # Billing by time for enabled bots
+        upTime = loopEndTime - startTime
+        unitsRan = int(upTime / 864)
+        if unitsBilled < unitsRan:
+            unitsToBill = unitsRan - unitsBilled
+            for npub in enabledBots.keys():
+                balance = ledger.getCreditBalance(npub)
+                if balance > 0:
+                    secondsBilled = (unitsToBill * 864)
+                    balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
+                if balance < 0:
+                    nostr.handleEnable(npub, False)
+                    if npub in foundTracker:
+                        del foundTracker[npub]
+            unitsBilled += unitsToBill
+
+    # reconnect relays if no responses found at tip for all bots
+    if len(foundTracker.keys()) == len(enabledBots) and len(enabledBots) > 0:
+        replies = 0
+        checks = 0
+        for npubStats in foundTracker.values():
+            replies = replies + npubStats["replies"]
+            checks = checks + npubStats["checks"]
+        if checks > 0 and replies == 0: nostr.reconnectRelays()
 
 if __name__ == '__main__':
 
@@ -53,7 +135,7 @@ if __name__ == '__main__':
     nostr.loadLightningIdCache()
 
     # Update bot profile if changed
-    nostr.checkBotProfile()
+    nostr.checkMainBotProfile()
 
     # Get initial enabled bots
     enabledBots = OrderedDict()
@@ -74,130 +156,33 @@ if __name__ == '__main__':
     if "fees" in nostr.config: fees = nostr.config["fees"]
     if fees is not None and "time864" in fees: feeTime864 = fees["time864"]
 
-    foundAtTip = {}
+    foundTracker = {}
+    lastBotTime = 0
 
     # Bot loop
     while True:
         loopStartTime, _ = utils.getTimes()
 
         # look for command and control messages
-        logger.debug("Checking for direct message commands")
         newMessages = nostr.checkDirectMessages()
+        sleepTime = sleepMin if len(newMessages) > 0 else min(sleepTime * sleepGrowth, sleepMax)
 
-        # sleep growth based on whether messages are being received
-        if len(newMessages) > 0: 
-            logger.debug("Processing direct messages")
-            nostr.processDirectMessages(newMessages)
-            sleepTime = sleepMin
-        else:
-            sleepTime = sleepTime * sleepGrowth
-            if sleepTime > sleepMax: sleepTime = sleepMax
+        # process the messages
+        nostr.processDirectMessages(newMessages)
 
         # process outstanding invoices
-        logger.debug("Checking for invoices")
         lnd.checkInvoices()
 
-        # process the next enabled bot
-        if len(enabledBots.keys()) > 0:
-            npub, eventHex = enabledBots.popitem(last=False)
-            botConfig = nostr.getNpubConfigFile(npub)
-            if random.randint(1, 100) <= 5:
-                # check outstanding payments status
-                nostr.processOutstandingPayments(npub, botConfig)
-            since = -1
-            if "eventSince" in botConfig: since = botConfig["eventSince"]
-            if type(since) is not int: since = 0
-            if since < jan012020:
-                since = 0
-                if "eventCreated" in botConfig: since = botConfig["eventCreated"]
-                if type(since) is not int: since = 0
-                if since == 0:
-                    logger.debug(f"Getting event information for {eventHex}")
-                    event = nostr.getEventByHex(eventHex)
-                    if event is not None: 
-                        since = event.created_at
-                        nostr.setNostrFieldForNpub(npub, "eventCreated", since)
-                        nostr.setNostrFieldForNpub(npub, "eventSince", since)
-                        botConfig["eventCreated"] = since
-                        botConfig["eventSince"] = since
-                    else:
-                        opnpub = nostr.getOperatorNpub()
-                        message = f"Event {eventHex} for {npub} wasn't found on relays"
-                        if opnpub is not None and opnpub == npub:
-                            nostr.sendDirectMessage(npub, message)
-                        logger.warning()
-            if since > jan012020:
-                until = since + timeChunk
-                currentTime, _ = utils.getTimes()
-                upToTip = False
-                if until > currentTime: 
-                    until = currentTime
-                    upToTip = True
-                responseEvents = nostr.getResponseEventsForEvent(eventHex, since, until)
-                responsesFound = 0
-                if "responsesFound" in botConfig: responsesFound = botConfig["responsesFound"]
-                responsesFound = responsesFound + len(responseEvents)
-                nostr.setNostrFieldForNpub(npub, "responsesFound", responsesFound)
-                responseCheckCount = 0
-                if "responseCheckCount" in botConfig: responseCheckCount = botConfig["responseCheckCount"]
-                responseCheckCount += 1
-                nostr.setNostrFieldForNpub(npub, "responseCheckCount", responseCheckCount)
-                logger.debug(f"Found {len(responseEvents)} events")
-                newsince = nostr.processEvents(responseEvents, npub, botConfig)
-                if upToTip:
-                    # restart at beginning to retry historical that may have failed
-                    # to get LN callback info with LN Provider
-                    since = 0
-                    logger.debug(f"Reached the time tip for {eventHex}, rechecking from its posting time")
-                    foundAtTip[npub] = responsesFound
-                    responsesFound = 0
-                    nostr.setNostrFieldForNpub(npub, "responsesFound", responsesFound)
-                    responseCheckCount = 0
-                    nostr.setNostrFieldForNpub(npub, "responseCheckCount", responseCheckCount)
-                else:
-                    # if no events in the window just processed, update since
-                    # - add 15 minutes if time is same and less than current time minus 15 minutes
-                    # bump 2 hours 
-                    if (newsince <= since and since < (currentTime-timeChunk)):
-                        since = since + timeChunk
-                    # close the gap 15 minutes
-                    elif (newsince <= since and since < (currentTime-900)):
-                        since = since + 900
-                    # otherwise, back off 5 minutes
-                    elif (newsince > since):
-                        since = newsince - 300
-                    if since < botConfig["eventCreated"]:
-                        logger.warning(f"Logic error. Since was being set to a value ({since}) earlier than eventCreated")
-                        since = botConfig["eventCreated"]
-                nostr.setNostrFieldForNpub(npub, "eventSince", since)
-        else:
-            enabledBots = nostr.getEnabledBots()
-            # billing by time for enabled bots
-            upTime = loopEndTime - startTime
-            unitsRan = int(upTime / 864)
-            if unitsBilled < unitsRan:
-                unitsToBill = unitsRan - unitsBilled
-                for npub in enabledBots.keys():
-                    balance = ledger.getCreditBalance(npub)
-                    if balance > 0:
-                        secondsBilled = (unitsToBill * 864)
-                        balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
-                    if balance < 0:
-                        nostr.handleEnable(npub, False)
-                unitsBilled += unitsToBill
-
-        # reconnect relays if no responses found at tip for all events
-        if len(foundAtTip.keys()) == len(enabledBots) and len(enabledBots) > 0:
-            foundcount = 0
-            for v in foundAtTip.values():
-                foundcount += v
-            if foundcount == 0:
-                nostr.reconnectRelays()
+        # process the next enabled bot (2 per minute)
+        if lastBotTime < loopStartTime - 30:
+            processBots()
+            lastBotTime, _ = utils.getTimes()
 
         # sleep if we can
         loopEndTime, _ = utils.getTimes()
         noLaterThan = loopStartTime + sleepTime
         if noLaterThan > loopEndTime:
             time2sleep = noLaterThan - loopEndTime
-            logger.debug(f"Sleeping for {time2sleep}")
+            if time2sleep > sleepMax: time2sleep = sleepMax
+            logger.debug(f"Sleeping {time2sleep} seconds")
             time.sleep(time2sleep)
