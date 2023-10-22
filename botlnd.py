@@ -223,8 +223,9 @@ def checkInvoices():
     # currentInvoice["r_hash"] = newInvoice["r_hash"]
     # currentInvoice["payment_request"] = payment_request
     # currentInvoice["add_index"] = newInvoice["add_index"]
-
     invoices = files.loadInvoices()
+    if len(invoices) == 0: return
+    logger.debug("Checking outstanding invoices")
     openInvoices = []
     for invoice in invoices:
         payment_hash = None
