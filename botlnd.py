@@ -31,7 +31,9 @@ def getLNDHeaders():
 
 def getLNDTimeouts():
     connectTimeout = 5
-    readTimeout = 10    # TODO: make configurable?
+    readTimeout = 30
+    if "connectTimeout" in config: connectTimeout = config["connectTimeout"]
+    if "readTimeout" in config: readTimeout = config["readTimeout"]
     return (connectTimeout, readTimeout)
 
 def getLNDProxies():
@@ -121,6 +123,8 @@ def trackPayment(paymentHash):
     headers = getLNDHeaders()
     status = None
     fee_msat = None
+    json_response = None
+    response = None
     try:
         response = requests.get(url=url,stream=True,timeout=timeout,proxies=proxies,headers=headers,verify=False)
         for raw_response in response.iter_lines():
@@ -142,13 +146,14 @@ def trackPayment(paymentHash):
             fee_msat = int(json_response["fee_msat"])
             return status, fee_msat
     except Exception as rte: # (ConnectionError, TimeoutError, ReadTimeoutError) as rte:
+        logger.warning(f"Error tracking payment: {str(rte)}")
         if json_response is not None: logger.debug(json_response)
         return "TIMEOUT", fee_msat
     finally:
         try:
-            response.close()
+            if response is not None: response.close()
         except Exception as e:
-            logger.warning("Error closing connection in trackPayment")
+            logger.warning(f"Error closing connection in trackPayment: {str(e)}")
     return status, fee_msat
 
 def payInvoice(paymentRequest):
@@ -181,37 +186,45 @@ def payInvoice(paymentRequest):
             if "fee_msat" in json_response:
                 resultFeeMSat = int(json_response["fee_msat"])
             if "payment_hash" in json_response:
-                payment_hash = json_response["payment_hash"]
-            if newStatus != resultStatus:
-                resultStatus = newStatus
-                if resultStatus == "SUCCEEDED":
-                    logger.debug(f" - {resultStatus}, routing fee paid: {resultFeeMSat} msat")
-                elif resultStatus == "FAILED":
-                    failureReason = "unknown failure reason"
-                    if "failure_reason" in json_response:
-                        failureReason = json_response["failure_reason"]
-                    logger.warning(f" - {resultStatus} : {failureReason}")
-                elif resultStatus == "IN_FLIGHT":
-                    logger.debug(f" - {resultStatus}")
-                else:
-                    logger.info(f" - {resultStatus}")
-                    logger.info(json_response)
+                new_payment_hash = json_response["payment_hash"]
+                if payment_hash is not None: 
+                    if new_payment_hash != payment_hash:
+                        logger.info(f"PAYMENT HASH changed from {payment_hash} to {new_payment_hash}")
+                payment_hash = new_payment_hash
+            #if newStatus == resultStatus: continue
+            resultStatus = newStatus
+            if resultStatus == "SUCCEEDED":
+                logger.debug(f" - {resultStatus}, routing fee paid: {resultFeeMSat} msat")
+            elif resultStatus == "FAILED":
+                failureReason = "unknown failure reason"
+                if "failure_reason" in json_response:
+                    failureReason = json_response["failure_reason"]
+                logger.warning(f" - {resultStatus} : {failureReason}")
+            elif resultStatus == "IN_FLIGHT":
+                logger.debug(f" - {resultStatus}")
+            else:
+                logger.info(f" - {resultStatus}")
+                logger.info(json_response)
     except Exception as rte: # (ConnectionError, TimeoutError, ReadTimeoutError) as rte:
         try:
             r.close()
         except Exception as e:
-            logger.warning("Error closing connection after exception in payInvoice")
+            logger.warning(f"Error closing connection after exception in payInvoice: {str(e)}")
         if json_response is not None: logger.debug(json_response)
         return "TIMEOUT", (feeLimit * 1000), payment_hash
     r.close()
     return resultStatus, resultFeeMSat, payment_hash
 
+_invoices = None
+
 def monitorInvoice(theInvoice):
-    invoices = files.loadInvoices()
-    invoices.append(theInvoice)
-    files.saveInvoices(invoices)
+    global _invoices
+    if _invoices is None: _invoices = files.loadInvoices()
+    _invoices.append(theInvoice)
+    files.saveInvoices(_invoices)
 
 def checkInvoices():
+    global _invoices
     # currentInvoice["npub"] = npub
     # currentInvoice["created_at"] = created_at
     # currentInvoice["created_at_iso"] = created_at_iso
@@ -223,11 +236,11 @@ def checkInvoices():
     # currentInvoice["r_hash"] = newInvoice["r_hash"]
     # currentInvoice["payment_request"] = payment_request
     # currentInvoice["add_index"] = newInvoice["add_index"]
-    invoices = files.loadInvoices()
-    if len(invoices) == 0: return
+    if _invoices is None: _invoices = files.loadInvoices()
+    if len(_invoices) == 0: return
     logger.debug("Checking outstanding invoices")
     openInvoices = []
-    for invoice in invoices:
+    for invoice in _invoices:
         payment_hash = None
         if "r_hash" in invoice: payment_hash = invoice["r_hash"]
         if "payment_hash" in invoice: payment_hash = invoice["payment_hash"]
@@ -263,7 +276,9 @@ def checkInvoices():
             logger.warning(f"invoice for {npub} has unrecognized state ({state}). payment_hash for lookup is {payment_hash}")
             logger.warning(f"response of lookupInvoice: ")
             logger.warning(json.dumps(obj=status,indent=2))
-    files.saveInvoices(openInvoices)
+    if len(_invoices) != len(openInvoices):
+        _invoices = openInvoices
+        files.saveInvoices(openInvoices)
 
 def handlePaidInvoice(invoice):
     npub = invoice["npub"]

@@ -4,9 +4,14 @@ import requests
 import urllib.parse
 
 logger = None
+config = None
 
 def gettimeouts():
-    return (5,30) # connect, read in seconds  TODO: make configurable?
+    connectTimeout = 5
+    readTimeout = 30
+    if "connectTimeout" in config: connectTimeout = config["connectTimeout"]
+    if "readTimeout" in config: readTimeout = config["readTimeout"]
+    return (connectTimeout, readTimeout)
 
 def gettorproxies():
     # with tor service installed, default port is 9050
@@ -22,6 +27,7 @@ def geturl(useTor=True, url=None, defaultResponse="{}", headers={}):
         cmdoutput = resp.text
         return json.loads(cmdoutput)
     except Exception as e:
+        logger.warning(f"Error getting data from LN URL Provider from url ({url}): {str(e)}")
         return json.loads(defaultResponse)
     
 def getLNURLPayInfo(identity):
