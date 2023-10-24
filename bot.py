@@ -5,6 +5,7 @@ import logging
 import random
 import shutil
 import sys
+import threading
 import time
 import botfiles as files
 import botledger as ledger
@@ -16,11 +17,12 @@ import botutils as utils
 def processBots():
     global enabledBots
     global foundTracker
-    global unitsBilled
+    percentCheckOutstandingPayments = 50
     if len(enabledBots.keys()) > 0:
         npub, eventHex = enabledBots.popitem(last=False)
         botConfig = nostr.getNpubConfigFile(npub)
-        if random.randint(1, 100) <= 5:
+        d100 = random.randint(1,100)
+        if d100 <= percentCheckOutstandingPayments:
             # check outstanding payments status
             nostr.processOutstandingPayments(npub, botConfig)
         since = -1
@@ -73,30 +75,36 @@ def processBots():
     if len(enabledBots.keys()) == 0:
         # Repopulate the list of enabled bots
         enabledBots = nostr.getEnabledBots()
-        # Billing by time for enabled bots
-        upTime = loopEndTime - startTime
-        unitsRan = int(upTime / 864)
-        if unitsBilled < unitsRan:
-            unitsToBill = unitsRan - unitsBilled
-            for npub in enabledBots.keys():
-                balance = ledger.getCreditBalance(npub)
-                if balance > 0:
-                    secondsBilled = (unitsToBill * 864)
-                    balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
-                if balance < 0:
-                    nostr.handleEnable(npub, False)
-                    if npub in foundTracker:
-                        del foundTracker[npub]
-            unitsBilled += unitsToBill
 
-    # reconnect relays if no responses found at tip for all bots
+    # report if no responses found at tip for all bots
     if len(foundTracker.keys()) == len(enabledBots) and len(enabledBots) > 0:
         replies = 0
         checks = 0
         for npubStats in foundTracker.values():
             replies = replies + npubStats["replies"]
             checks = checks + npubStats["checks"]
-        if checks > 0 and replies == 0: nostr.reconnectRelays()
+        if checks > 0 and replies == 0: 
+            logger.warning(f"No replies found for {checks} checks across {len(enabledBots)} bots")
+            #nostr.reconnectRelays()
+
+def billForTime():
+    global startTime
+    global unitsBilled
+    currentTime, _ = utils.getTimes()
+    upTime = currentTime - startTime
+    unitsRan = int(upTime / 864)
+    if unitsBilled < unitsRan:
+        unitsToBill = unitsRan - unitsBilled
+        for npub in enabledBots.keys():
+            balance = ledger.getCreditBalance(npub)
+            if balance > 0:
+                secondsBilled = (unitsToBill * 864)
+                balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
+            if balance < 0:
+                nostr.handleEnable(npub, False)
+                if npub in foundTracker:
+                    del foundTracker[npub]
+        unitsBilled += unitsToBill    
 
 if __name__ == '__main__':
 
@@ -127,6 +135,7 @@ if __name__ == '__main__':
         quit()
     nostr.config = serverConfig["nostr"]
     lnd.config = serverConfig["lnd"]
+    lnurl.config = serverConfig["lnurl"]
 
     # Connect to relays
     nostr.connectToRelays()
@@ -141,10 +150,10 @@ if __name__ == '__main__':
     enabledBots = OrderedDict()
     enabledBots = nostr.getEnabledBots()
 
-    sleepMin = 1
+    sleepMin = 5
     sleepMax = 10
     sleepGrowth = 1.2
-    sleepTime = 1
+    sleepTime = sleepMin
 
     jan012020 = 1577836800
     startTime, _ = utils.getTimes()
@@ -163,23 +172,27 @@ if __name__ == '__main__':
     while True:
         loopStartTime, _ = utils.getTimes()
 
-        # look for command and control messages
-        newMessages = nostr.checkDirectMessages()
-        sleepTime = sleepMin if len(newMessages) > 0 else min(sleepTime * sleepGrowth, sleepMax)
-
-        # process the messages
-        nostr.processDirectMessages(newMessages)
-
         # process outstanding invoices
         lnd.checkInvoices()
 
-        # process the next enabled bot (2 per minute)
         if lastBotTime < loopStartTime - 30:
+            # process the next enabled bot (2 per minute)
             processBots()
             lastBotTime, _ = utils.getTimes()
+        else:
+            # look for command and control messages
+            newMessages = nostr.checkDirectMessages()
+            sleepTime = sleepMin if len(newMessages) > 0 else min(sleepTime * sleepGrowth, sleepMax)
+            # process the messages
+            nostr.processDirectMessages(newMessages)
+
+        # process part of loop end time
+        loopEndTime, _ = utils.getTimes()
+
+        # time billing
+        billForTime()
 
         # sleep if we can
-        loopEndTime, _ = utils.getTimes()
         noLaterThan = loopStartTime + sleepTime
         if noLaterThan > loopEndTime:
             time2sleep = noLaterThan - loopEndTime

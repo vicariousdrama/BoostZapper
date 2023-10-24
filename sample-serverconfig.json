@@ -5,7 +5,7 @@
         "botProfile.comment": "The metadata for the bot running the service",
         "botProfile": {
             "name": "Jessica Botzzapp",
-            "description": "This bot can be used to zap responses to events. Send a direct message to the bot to get started. (Coded by vicariousdrama@nodeyez.com)",
+            "about": "This bot can be used to zap responses to events. Send a direct message to the bot to get started. (Coded by vicariousdrama@nodeyez.com)",
             "picture": "",
             "banner": "",
             "lud16": "wearydoor58@walletofsatoshi.com",
@@ -13,39 +13,34 @@
         },
         "relays.comment": "The list of relays that the primary bot uses",
         "relays": [
-            "relay.nostr.bg",
-            "relay.damus.io",
-            "nos.lol",
-            "nostr.wine",
-            "eden.nostr.land"    
-        ],
-        "operatornpub.comment": "The npub of the operator to relay support messages to",
-        "operatornpub": "",
-        "defaultProfile.comment": "The default profile fields for newly created zapper identities",
-        "defaultProfile": {
-            "name": "Zapping Bot",
-            "description": "This bot zaps responses to events",
-            "picture": "",
-            "banner": "",
-            "lud16": "wearydoor58@walletofsatoshi.com",
-            "nip05": ""
-        },
-        "defaultRelays.comment": "The default relays to assign to newly created zapper identities",
-        "defaultRelays": [
             {"url": "wss://nostr.pleb.network", "read": true, "write": true},
             {"url": "wss://nostr-pub.wellorder.net", "read": true, "write": true},
             {"url": "wss://nostr.mom", "read": true, "write": true},
             {"url": "wss://relay.nostr.bg", "read": true, "write": true},
             {"url": "wss://relay.damus.io", "read": true, "write": true},
             {"url": "wss://nos.lol", "read": true, "write": true},
-            {"url": "wss://nostr.wine", "read": true, "write": true}
+            {"url": "wss://nostr.wine", "read": true, "write": false}
         ],
+        "operatornpub.comment": "The npub of the operator to relay support messages to",
+        "operatornpub": "",
+        "defaultProfile.comment": "The default profile fields for newly created zapper identities",
+        "defaultProfile": {
+            "name": "Zapping Bot",
+            "about": "This bot zaps responses to events",
+            "picture": "",
+            "banner": "",
+            "lud16": "wearydoor58@walletofsatoshi.com",
+            "nip05": ""
+        },
         "fees.comment": "Fees the service should charge for types of processing, as measured in mcredits",
         "fees": {
             "replyMessage": 50,
             "zapEvent": 50,
             "time864": 1000
-        }
+        },
+        "excludeFromDirectMessages": [
+            {"label": "Wino [Bot]", "npub": "npub1fyvwkve2gxm3h2d8fvwuvsnkell4jtj4zpae8w4w8zhn2g89t96s0tsfuk"}
+        ]
     },
     "lnd": {
         "address.comment": "The IP address or FQDN to communicate with the LND server over REST",
@@ -57,6 +52,16 @@
         "paymentTimeout.comment": "Time permitted in seconds to complete a payment or expire it",
         "paymentTimeout": 30,
         "feeLimit.comment": "Fee limit, in sats, allowed for each payment made",
-        "feeLimit": 2
+        "feeLimit": 2,
+        "connectTimeout.comment": "Time permitted in seconds to connect to LND",
+        "connectTimeout": 5,
+        "readTimeout.comment": "Time permitted in seconds to read all data from LND",
+        "readTimeout": 30
+    },
+    "lnurl": {
+        "connectTimeout.comment": "Time permitted in seconds to connect to LN URL Providers",
+        "connectTimeout": 5,
+        "readTimeout.comment": "Time permitted in seconds to read all data from LN URL Providers",
+        "readTimeout": 30
     }
 }

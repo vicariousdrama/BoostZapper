@@ -31,6 +31,12 @@
         "macaroon": "0201036C.....",
         "paymentTimeout": 30,
         "feeLimit": 5
+    },
+    "lnurl": {
+        "connectTimeout.comment": "Time permitted in seconds to connect to LN URL Providers",
+        "connectTimeout": 5,
+        "readTimeout.comment": "Time permitted in seconds to read all data from LN URL Providers",
+        "readTimeout": 30
     }
 }
 

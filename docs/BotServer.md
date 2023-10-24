@@ -33,7 +33,7 @@ cp -n sample-serverconfig.json data/serverconfig.json
 
 Within this directory, a configuration file named `serverconfig.json` is read.  If this file does not exist, one will be created using the `sample-serverconfig.json`.
 
-The server configuration file is divided into 2 key sections. One for Nostr, and the other for Lightning Server
+The server configuration file is divided into 3 key sections. One for each of Nostr, Lightning Server, and LN URL Providers
 
 ### Nostr Config
 
@@ -52,8 +52,8 @@ The `nostr` configuration section has these keys
 | relays | The list of relays the primary bot uses |
 | operatornpub | The npub of the operator to relay support messages to |
 | defaultProfile | The default profile fields for newly created zapper identities |
-| defaultRelays | The default relays to assign to newly created zapper identities |
 | fees | Fees the service should charge for types of processing, as measured in mcredits |
+| excludeFromDirectMessages | Any npubs that direct messages should not be sent to. |
 
 The most critical to define here is the `botnsec`.  You should generate an nsec on your own, and not use an existing one such as that for your personal usage.  For convenience, you can consider using the [vanitygen](vanitygen.md) script.
 
@@ -63,7 +63,7 @@ The `relays` section contains the list of relays that the bot will use to read e
 
 The `operatornpub` is a string that should contain the npub of the operator (thats you!) of the bot.  If a user messaging the bot wants to contact support, this is the npub that the messages are forwarded to.
 
-The `defaultProfile` and `defaultRelays` are structured similarly to the profile and relays sections. These values get assigned as defaults for newly created identities established from users using the bot to configure their own event to monitor and conditions.  Each user's bot identity is different to allow for tailoring the profile picture, banner, name etc associated with the bot. Furthermore, it allows for external paid services associated with the npub of the bot (e.g. a paid relay)
+The `defaultProfile` is structured similarly to the profile section. These values get assigned as defaults for newly created identities established from users using the bot to configure their own event to monitor and conditions.  Each user's bot identity is different to allow for tailoring the profile picture, banner, name etc associated with the bot. 
 
 The `fees` section defines what the charges should be for different types of processing, as measured in mcredits (millicredits). A credit is equivalent to 1000 millicredits, and 1 credit is granted per satoshi.  At time of writing, there are 3 types of service fees:
 
@@ -72,6 +72,8 @@ The `fees` section defines what the charges should be for different types of pro
 - A `zapEvent` fee is charge for for each user reply that is zapped by the bot.
 
 - The `time864` corresponds to the fee that is charged for each operational period of 864 seconds (1/100th or 1% of a day).
+
+The `excludeFromDirectMessages` section denotes any npubs for which direct messages should be ignored, and for which no direct messages should be sent to.  For example, relay bots such as that from Nostr.wine
 
 ## Lightning Configuration
 
@@ -90,6 +92,8 @@ The `lnd` configuration section has these keys
 | macaroon | The macaroon for authentication and authorization for the LND server in hex format |
 | paymentTimeout | The time allowed in seconds to complete a payment or expire it |
 | feeLimit | The maximum amount to allow for routing fees for each payment, in sats |
+| connectTimeout | Time permitted in seconds to connect to LND |
+| readTimeout | Time permitted in seconds to read all data from LND |
 
 The `address` should be the ip address or fully qualified domain name to communicate with the LND server over REST
 
@@ -116,7 +120,31 @@ The `paymentTimeout` is the number of seconds that should be allowed for the pay
 
 The `feeLimit` is the maximum amount of fees, in sats, that you are willing to pay per zap performed, in addition to the amount being zapped.
 
+The `connectTimeout` is the number of seconds to allow for making a connection to LND.
+
+The `readTimeout` is the number of seconds to allow reading all data from LND.
+
 The LND server needs to be reachable from where the script is run.
+
+## LN Url Providers Configuration
+
+Edit the configuration
+
+```sh
+nano data/serverconfig.json
+```
+
+The `lnurl` configuration section has these keys
+
+| key | description |
+| --- | --- |
+| connectTimeout | Time permitted in seconds to connect to LN Url Providers |
+| readTimeout | Time permitted in seconds to read all data from LN Url Providers |
+
+The `connectTimeout` is the number of seconds to allow for making a connection to a LN Url Provider.
+
+The `readTimeout` is the number of seconds to allow reading all data from a LN Url Provider.
+
 
 ## Running the Bot
 
