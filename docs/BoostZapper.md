@@ -33,7 +33,7 @@ source ~/.pyenv/boostzapper/bin/activate
 
 Then install the dependencies
 ```sh
-python3 -m pip install nostr@git+https://github.com/callebtc/python-nostr.git
+python3 -m pip install nostr@git+https://github.com/vicariousdrama/python-nostr.git
 python3 -m pip install requests
 python3 -m pip install bech32
 ```

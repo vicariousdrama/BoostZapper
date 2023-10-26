@@ -2,7 +2,7 @@
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from nostr.key import PrivateKey, PublicKey
-from nostr.event import Event, EventKind, EncryptedDirectMessage
+from nostr.event import Event, EventKind, EncryptedDirectMessage, AuthMessage
 from nostr.filter import Filter, Filters
 from nostr.message_type import ClientMessageType
 from nostr.relay_manager import RelayManager
@@ -378,8 +378,8 @@ def getNostrRelaysFromConfig(aConfig):
             if type(relay) is dict:
                 if "url" not in relay: continue
                 relayUrl = relay["url"]
-                canRead = relay["read"] if "canRead" in relay else canRead
-                canWrite = relay["write"] if "canWrite" in relay else canWrite
+                canRead = relay["read"] if "read" in relay else canRead
+                canWrite = relay["write"] if "write" in relay else canWrite
             relayUrl = relayUrl if str(relayUrl).startswith("wss://") else f"wss://{relayUrl}"
             if relayUrl not in relayUrls:
                 relayUrls.append(relayUrl)
@@ -1241,6 +1241,15 @@ def getNostrEvents(filters, customRelayManager=None):
     time.sleep(_relayPublishTime)
     _nostrEventSubscriptionsMade += 1
     events = []
+    while theRelayManager.message_pool.has_auths():
+        auth_msg = theRelayManager.message_pool.get_auth()
+        logger.info(f"AUTH request received from {auth_msg.url} with challenge: {auth_msg.challenge}")
+        am = AuthMessage(challenge=auth_msg.challenge,relay_url=auth_msg.url)
+        getBotPrivateKey().sign_event(am)
+        logger.debug(f"Sending signed AUTH message to {auth_msg.url}")
+        theRelayManager.publish_auth(am)
+        time.sleep(_relayPublishTime)
+        theRelayManager.message_pool.auths.task_done()
     while theRelayManager.message_pool.has_events():
         event_msg = theRelayManager.message_pool.get_event()
         events.append(event_msg.event)
@@ -1458,6 +1467,9 @@ def processEvents(npub, responseEvents, botConfig):
             continue
         # get callback info and invoice
         lnurlPayInfo, lnurlp = lnurl.getLNURLPayInfo(lightningId)
+        if not lnurl.isLNURLProviderAllowed(lightningId):
+            logger.warning(f"LN Provider of identity {lightningId} is on the denyProviders list and cannot be zapped at this time")
+            continue
         callback, bech32lnurl = validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, amount)
         if callback is None or bech32lnurl is None: continue
         logger.debug(f"Preparing zap request for {amount} sats to {lightningId}")
@@ -1480,11 +1492,11 @@ def processEvents(npub, responseEvents, botConfig):
         paidluds[lightningId] = {"amount_sat": amount, "payment_time": paymentTime, "payment_time_iso": paymentTimeISO}
         if verifyUrl is not None: paidnpubs[pubkey]["payment_verify_url"] = verifyUrl
         balance = ledger.recordEntry(npub, "ZAPS", -1 * amount, 0, f"Zap {lightningId} for reply to {eventId}")
-        paymentStatus, paymentFees, paymentHash = lnd.payInvoice(paymentRequest)
+        paymentStatus, paymentFees, paymentHash, paymentIndex = lnd.payInvoice(paymentRequest)
         balance = ledger.recordEntry(npub, "ROUTING FEES", 0, -1 * paymentFees, f"Zap {lightningId} for reply to {eventId}")
         balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feesZapEvent, f"Service fee for zap {lightningId}")
         eventbalance -= float(amount) + (float(paymentFees)/float(1000)) + (float(feesZapEvent)/float(1000))
-        paidnpubs[pubkey].update({'payment_status': paymentStatus, 'fee_msat': paymentFees, 'payment_hash': paymentHash})
+        paidnpubs[pubkey].update({'payment_status': paymentStatus, 'fee_msat': paymentFees, 'payment_hash': paymentHash, 'payment_index': paymentIndex})
         # Save responses, paidnpubs, and paidluds after each payment
         files.saveJsonFile(fileResponses, responses)
         files.saveJsonFile(filePaidNpubs, paidnpubs)
@@ -1671,13 +1683,16 @@ def makeZapRequest(npub, botConfig, amountToZap, zapMessage, recipientPubkey, ev
     relaysTagList = []
     relaysTagList.append("relays")
     botrelays = getNostrRelaysForNpub(npub, botConfig)
+    relaysLeftToAdd = 10
     relays = []
     for relay in botrelays:
+        if relaysLeftToAdd <= 0: break
         if type(relay) is str:
             relays.append(relay)
         if type(relay) is dict:
             canread = relay["read"] if "read" in relay else True
             if canread and "url" in relay: relays.append(relay["url"])
+        relaysLeftToAdd -= 1
     relaysTagList.extend(relays)
     zapTags.append(relaysTagList)
     zapTags.append(["amount", str(amountMillisatoshi)])
@@ -1721,19 +1736,23 @@ def processOutstandingPayments(npub, botConfig):
             lightningId = ""
             if "lightning_id" in paidentry: lightningId = paidentry["lightning_id"]
             logger.info(f"Tracking LND payment with payment_hash {payment_hash} for {lightningId} - {paidnpub}")
-            payment_status, fee_msat = lnd.trackPayment(payment_hash)
-            if payment_status is None: continue
-            if payment_status == "TIMEOUT": continue
+            new_payment_status, fee_msat = lnd.trackPayment(payment_hash)
+            if new_payment_status is None: continue
+            if new_payment_status == "TIMEOUT": continue
             if fee_msat is None: continue
-            paidnpubs[paidnpub]["payment_status"] = payment_status
+            if new_payment_status == payment_status: continue
+            logger.debug(f"Payment status now {new_payment_status}, fees: {fee_msat} msat. Ledger will be udpated")
+            paidnpubs[paidnpub]["payment_status"] = new_payment_status
             paidnpubs[paidnpub]["fee_msat"] = fee_msat
             files.saveJsonFile(filePaidNpubs, paidnpubs)
             if fee_msat > original_fee_msat:
                 # additional fee? should never happen
                 additionalFee = fee_msat - original_fee_msat
+                logger.debug(f"Additional fee is {additionalFee} msat based on actual fee {fee_msat} msat - original {original_fee_msat} msat")
                 balance = ledger.recordEntry(npub, "ROUTING FEES", 0, -1 * additionalFee, f"Zap {lightningId} for reply to {eventId}")
             elif fee_msat < original_fee_msat:
                 # credit
                 creditForFee = original_fee_msat - fee_msat
+                logger.debug(f"Credit {creditForFee} msat for fee overage. Originally charged {original_fee_msat} msat. Actual fee was {fee_msat} msat")
                 balance = ledger.recordEntry(npub, "ROUTING FEES", 0, creditForFee, f"Credit for zap payment after routing fee finalized for {lightningId} for reply to {eventId}")
 

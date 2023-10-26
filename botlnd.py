@@ -114,7 +114,7 @@ def decodeInvoice(paymentRequest):
 # Returns payment status and fee_msat paid
 def trackPayment(paymentHash):
     # Setup
-    base64paymentHash = base64.b64encode(bytes.fromhex(paymentHash))
+    base64paymentHash = base64.urlsafe_b64encode(bytes.fromhex(paymentHash))
     base64paymentHash = urllib.parse.quote(base64paymentHash)
     suffix = f"/v2/router/track/{base64paymentHash}?no_inflight_updates=True"
     url = getLNDUrl(suffix)
@@ -175,6 +175,7 @@ def payInvoice(paymentRequest):
     resultFeeMSat = 0
     json_response = None
     payment_hash = None
+    payment_index = None
     r = requests.post(url=url,stream=True,data=json.dumps(lndPostData),timeout=timeout,proxies=proxies,headers=headers,verify=False)
     try:
         for raw_response in r.iter_lines():
@@ -191,6 +192,8 @@ def payInvoice(paymentRequest):
                     if new_payment_hash != payment_hash:
                         logger.info(f"PAYMENT HASH changed from {payment_hash} to {new_payment_hash}")
                 payment_hash = new_payment_hash
+            if "payment_index" in json_response:
+                payment_index = int(json_response["payment_index"])
             #if newStatus == resultStatus: continue
             resultStatus = newStatus
             if resultStatus == "SUCCEEDED":
@@ -211,9 +214,9 @@ def payInvoice(paymentRequest):
         except Exception as e:
             logger.warning(f"Error closing connection after exception in payInvoice: {str(e)}")
         if json_response is not None: logger.debug(json_response)
-        return "TIMEOUT", (feeLimit * 1000), payment_hash
+        return "TIMEOUT", (feeLimit * 1000), payment_hash, payment_index
     r.close()
-    return resultStatus, resultFeeMSat, payment_hash
+    return resultStatus, resultFeeMSat, payment_hash, payment_index
 
 _invoices = None
 
