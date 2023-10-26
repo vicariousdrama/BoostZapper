@@ -62,6 +62,10 @@
         "connectTimeout.comment": "Time permitted in seconds to connect to LN URL Providers",
         "connectTimeout": 5,
         "readTimeout.comment": "Time permitted in seconds to read all data from LN URL Providers",
-        "readTimeout": 30
+        "readTimeout": 30,
+        "denyProviders.comment": "Domains for which zaps will not be paid",
+        "denyProviders": [
+            "zeuspay.com"
+        ]
     }
 }

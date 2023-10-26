@@ -17,7 +17,7 @@ source ~/.pyenv/boostzapper/bin/activate
 
 Then install the dependencies
 ```sh
-python3 -m pip install nostr@git+https://github.com/callebtc/python-nostr.git
+python3 -m pip install nostr@git+https://github.com/vicariousdrama/python-nostr.git
 python3 -m pip install requests
 python3 -m pip install bech32
 ```
@@ -140,11 +140,13 @@ The `lnurl` configuration section has these keys
 | --- | --- |
 | connectTimeout | Time permitted in seconds to connect to LN Url Providers |
 | readTimeout | Time permitted in seconds to read all data from LN Url Providers |
+| denyProviders | An optional list of domains hosting LN URL Providers that will not receive payouts |
 
 The `connectTimeout` is the number of seconds to allow for making a connection to a LN Url Provider.
 
 The `readTimeout` is the number of seconds to allow reading all data from a LN Url Provider.
 
+The `denyProviders` is an array of strings containing entries of domain names for LN Url Providers that should not receive zaps even if they support it. This is helpful to exclude domains that are problematic with respect to HTLCs and may result in channel closures or loss of funds.
 
 ## Running the Bot
 

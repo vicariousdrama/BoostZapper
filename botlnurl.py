@@ -45,6 +45,15 @@ def getLNURLPayInfo(identity):
     j = geturl(useTor, url)
     return j, url
 
+def isLNURLProviderAllowed(identity):
+    identityParts = identity.split("@")
+    if len(identityParts) != 2: return False
+    domainname = identityParts[1]
+    if "denyProviders" in config:
+        if domainname in config["denyProviders"]:
+            return False
+    return True
+
 def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
     logger.debug(f"Requesting invoice from LNURL service using zap request")
     encoded = getEncodedZapRequest(zapRequest)
