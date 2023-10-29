@@ -305,3 +305,26 @@ def handleCanceledInvoice(invoice):
     nostr.sendDirectMessage(npub, message)
     # Clear current invoice from nostr config for pub
     nostr.setNostrFieldForNpub(npub, "currentInvoice", {})
+
+def getPaymentDestinationFilename():
+    filename = f"{files.dataFolder}paymentdestination.json"
+    return filename
+
+def recordPaymentDestination(decodedInvoice):
+    if not all(k in decodedInvoice for k in ("destination","num_satoshis","num_msat")): 
+        return
+    destination_pubkey = decodedInvoice["destination"]
+    num_satoshis = int(decodedInvoice["num_satoshis"])
+    _, diso = utils.getTimes()
+    diso = diso[0:10]
+    filename = getPaymentDestinationFilename()
+    pddata = files.loadJsonFile(filename, {})
+    d = {}
+    if diso in pddata.keys(): d = pddata[diso]
+    dpk = {"qty":0, "amount": 0}
+    if destination_pubkey in d.keys(): dpk = d[destination_pubkey]
+    dpk["qty"] = dpk["qty"] + 1
+    dpk["amount"] = dpk["amount"] + num_satoshis
+    d[destination_pubkey] = dpk
+    pddata[diso] = d
+    files.saveJsonFile(filename, pddata)
