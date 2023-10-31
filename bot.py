@@ -84,7 +84,7 @@ def processBots():
             replies = replies + npubStats["replies"]
             checks = checks + npubStats["checks"]
         if checks > 0 and replies == 0: 
-            logger.warning(f"No replies found for {checks} checks across {len(enabledBots)} bots")
+            logger.warning(f"No replies found for {checks} checks across {len(enabledBots)} events")
             #nostr.reconnectRelays()
 
 def billForTime():
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     enabledBots = nostr.getEnabledBots()
 
     sleepMin = 5
-    sleepMax = 10
+    sleepMax = 15
     sleepGrowth = 1.2
     sleepTime = sleepMin
 

@@ -15,29 +15,47 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 logger = None
 config = None
+activeConfig = None
+
+def getLNDServerConfig():
+    global activeConfig
+    if activeConfig is not None: return activeConfig
+    if not all(k in config for k in ("activeServer","servers")): activeConfig = dict(config); return activeConfig
+    activeServerId = config["activeServer"]
+    if activeServerId is None: activeConfig = dict(config); return activeConfig
+    servers = config["servers"]
+    if activeServerId not in servers: activeConfig = dict(config); return activeConfig
+    activeServer = servers[activeServerId]
+    if all(k in activeServer for k in ("address","port","macaroon")): activeConfig = dict(activeServer); return activeConfig
+    return config
 
 def getLNDUrl(suffix):
-    serverAddress = config["address"]
-    serverPort = config["port"]
+    lndServerConfig = getLNDServerConfig()
+    serverAddress = lndServerConfig["address"]
+    serverPort = lndServerConfig["port"]
     url = f"https://{serverAddress}:{serverPort}{suffix}"
     return url
 
 def getLNDHeaders():
+    lndServerConfig = getLNDServerConfig()
+    serverMacaroon = lndServerConfig["macaroon"]
     headers = {
-        "Grpc-Metadata-macaroon": config["macaroon"],
+        "Grpc-Metadata-macaroon": serverMacaroon,
         "Connection": "close"
         }
     return headers
 
 def getLNDTimeouts():
+    lndServerConfig = getLNDServerConfig()
     connectTimeout = 5
     readTimeout = 30
-    if "connectTimeout" in config: connectTimeout = config["connectTimeout"]
-    if "readTimeout" in config: readTimeout = config["readTimeout"]
+    if "connectTimeout" in lndServerConfig: connectTimeout = lndServerConfig["connectTimeout"]
+    if "readTimeout" in lndServerConfig: readTimeout = lndServerConfig["readTimeout"]
     return (connectTimeout, readTimeout)
 
 def getLNDProxies():
-    if str(config["address"]).endswith(".onion"):
+    lndServerConfig = getLNDServerConfig()
+    if str(lndServerConfig["address"]).endswith(".onion"):
         return {'http': 'socks5h://127.0.0.1:9050','https': 'socks5h://127.0.0.1:9050'}
     else:
         return {}
@@ -157,9 +175,12 @@ def trackPayment(paymentHash):
     return status, fee_msat
 
 def payInvoice(paymentRequest):
+    lndServerConfig = getLNDServerConfig()
     logger.debug(f"Paying invoice")
-    feeLimit = config["feeLimit"]
-    paymentTimeout = config["paymentTimeout"]
+    feeLimit = 2
+    paymentTimeout = 30
+    if "feeLimit" in lndServerConfig: lndServerConfig["feeLimit"]
+    if "paymentTimeout" in lndServerConfig: paymentTimeout = lndServerConfig["paymentTimeout"]
     suffix = "/v2/router/send"
     lndPostData = {
         "payment_request": paymentRequest,
