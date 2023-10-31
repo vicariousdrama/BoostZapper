@@ -19,7 +19,7 @@ def gettorproxies():
     #     cat /etc/tor/torrc | grep SOCKSPort | grep -v "#" | awk '{print $2}'
     return {'http': 'socks5h://127.0.0.1:9050','https': 'socks5h://127.0.0.1:9050'}
 
-def geturl(useTor=True, url=None, defaultResponse="{}", headers={}):
+def geturl(useTor=True, url=None, defaultResponse="{}", headers={}, description=None):
     try:
         proxies = gettorproxies() if useTor else {}
         timeout = gettimeouts()
@@ -27,6 +27,7 @@ def geturl(useTor=True, url=None, defaultResponse="{}", headers={}):
         cmdoutput = resp.text
         return json.loads(cmdoutput)
     except Exception as e:
+        if description is not None: logger.info(description)
         logger.warning(f"Error getting data from LN URL Provider from url ({url}): {str(e)}")
         return json.loads(defaultResponse)
     
@@ -42,7 +43,7 @@ def getLNURLPayInfo(identity):
         protocol = "http"
         useTor = True
     url = f"{protocol}://{domainname}/.well-known/lnurlp/{username}"
-    j = geturl(useTor, url)
+    j = geturl(useTor, url, "{}", {}, "Get LNURL Pay Info")
     return j, url
 
 def isLNURLProviderAllowed(identity):
@@ -65,7 +66,7 @@ def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
     else:
         url = f"{callback}?"
     url = f"{url}amount={amountMillisatoshi}&nostr={encoded}&lnurl={bech32lnurl}"
-    j = geturl(useTor, url)
+    j = geturl(useTor, url, "{}", {}, "Get Invoice from LN Url Provider")
     return j
 
 def getEncodedZapRequest(zapRequest):

@@ -27,7 +27,8 @@ _relayPublishTime = 1.50
 _relayConnectTime = 1.25
 _nostrRelayConnectsMade = 0
 _singleRelayManager = True
-_relayReconnectExisting = True
+_relayReconnectExisting = False
+_relayeventcounter = {}
 def connectToRelays():
     logger.debug("Connecting to relays")
     global botRelayManager
@@ -353,6 +354,16 @@ def setNostrFieldForNpub(npub, fieldname, fieldvalue):
     if changed:
         filename = getNpubConfigFilename(npub)
         files.saveJsonFile(filename, npubConfig)
+
+def addToNpubIndex(npub, eventId):
+    basePath = f"{files.userEventsFolder}{npub}/"
+    utils.makeFolderIfNotExists(basePath)
+    filename = f"{basePath}index.json"
+    npubIndex = files.loadJsonFile(filename, [])
+    _, diso = utils.getTimes()
+    newEntry = {"date_iso": diso, "eventId": eventId}
+    npubIndex.append(newEntry)
+    files.saveJsonFile(filename, npubIndex)
 
 def incrementNostrFieldForNpub(npub, fieldname, amount):
     npubConfig = getNpubConfigFile(npub)
@@ -912,6 +923,8 @@ def handleEvent(npub, content):
                 eventBalance = float(eventBudget) - float(eventSpent)
                 setNostrFieldForNpub(npub, "eventBalance", eventBalance) 
                 setNostrFieldForNpub(npub, "eventBudgetWarningSent", None)
+        # add to index
+        addToNpubIndex(npub, newEventId)
     if newEventId is None or len(newEventId) == 0:
         message = "No longer monitoring an event"
     else:
@@ -986,7 +999,7 @@ def handleCredits(npub, content):
     # save the current invoice
     payment_request = newInvoice["payment_request"]
     created_at, created_at_iso = utils.getTimes()
-    expiry_time = datetime.utcnow() + timedelta(seconds=expiry)
+    expiry_time = datetime.now() + timedelta(seconds=expiry)
     expiry_time_int, expiry_time_iso = utils.getTimes(expiry_time)
     currentInvoice["npub"] = npub
     currentInvoice["created_at"] = created_at
@@ -1188,9 +1201,11 @@ def handleSupport(npub, content):
             sendDirectMessage(npub, message)
 
 def getEnabledBots():
+    global _relayeventcounter
     logger.debug("Populating list of enabled bots")
     enabledBots = OrderedDict()
     botConfigs = files.listUserConfigs()
+    checkedNewEvent = False
     for botConfigFile in botConfigs:
         npub = botConfigFile.split(".")[0]
         npub2 = PublicKey().from_npub(npub).bech32()
@@ -1207,8 +1222,9 @@ def getEnabledBots():
                 eventAutoChangeChecked = 0
                 if "eventAutoChangeChecked" in botConfig: eventAutoChangeChecked = botConfig["eventAutoChangeChecked"]
                 currentTime, _ = utils.getTimes()
-                if currentTime > eventAutoChangeChecked + (10*60):
+                if checkedNewEvent or currentTime > eventAutoChangeChecked + (10*60):
                     newEvent = getNewEventWithPhraseByNpub(npub, eacPhrase, eventCreated)
+                    checkedNewEvent = True
                     if newEvent is not None: 
                         changeEvent = (newEvent.created_at > eventCreated)
                         newId = utils.normalizeToBech32(newEvent.id, "note")
@@ -1220,7 +1236,7 @@ def getEnabledBots():
                         else: changeEvent = True
                         if changeEvent:
                             logger.debug(f"New event found with id {newId}")
-                            # assign new info
+                            # assign new info to main config
                             botConfig["eventId"] = newId
                             setNostrFieldForNpub(npub, "eventId", newId)
                             setNostrFieldForNpub(npub, "eventCreated", eventCreated)
@@ -1228,6 +1244,8 @@ def getEnabledBots():
                             if "eventBudget" in botConfig:
                                 eventBalance = botConfig["eventBudget"]
                                 setNostrFieldForNpub(npub, "eventBalance", eventBalance)
+                            # add to index
+                            addToNpubIndex(npub, newId)
                             message = f"Now monitoring event {newId}"
                             sendDirectMessage(npub, message)
                         else:
@@ -1243,6 +1261,26 @@ def getEnabledBots():
                 enabledBots[npub] = eventIdhex
             else:
                 logger.warning("Bot enabled for {npub} but could not convert {eventId} to hex")
+    if checkedNewEvent:
+        if len(_relayeventcounter.keys()) > 0:
+            logger.debug(f"Relay event messages received since last event auto check")
+            rl = []
+            for v in botRelayManager.relays.values():
+                if v.policy.should_read:
+                    if v.url not in rl: rl.append(v.url)
+            for k, v in _relayeventcounter.items():
+                logger.debug(f"{k}: {v}")
+                if k in rl: rl.remove(k)            
+            if len(rl) > 0:
+                logger.warning("These relays did not have any events")
+                for k in rl: logger.debug(f"{k}")
+                if len(rl) > (len(botRelayManager.relays.keys())//3):
+                    logger.debug("Relays without events exceeded threshold. Will force reconnect")
+                    reconnectRelays()
+            _relayeventcounter = {}
+        else:
+            logger.warning(f"No messages from relays since last event auto check")
+            reconnectRelays()
     return enabledBots
 
 def getEventByHex(npub, eventHex):
@@ -1282,6 +1320,7 @@ def getNewEventWithPhraseByNpub(npub, eacPhrase, currentCreated):
 _nostrEventSubscriptionsMade = 0
 def getNostrEvents(filters, customRelayManager=None):
     global _nostrEventSubscriptionsMade
+    global _relayeventcounter
     t, _ = utils.getTimes()
     subscription_id = f"t{t}"
     request = [ClientMessageType.REQUEST, subscription_id]
@@ -1294,7 +1333,7 @@ def getNostrEvents(filters, customRelayManager=None):
     time.sleep(_relayPublishTime)
     _nostrEventSubscriptionsMade += 1
     events = []
-    missevent = 0
+    missedevents = []
     while theRelayManager.message_pool.has_auths():
         auth_msg = theRelayManager.message_pool.get_auth()
         logger.info(f"AUTH request received from {auth_msg.url} with challenge: {auth_msg.challenge}")
@@ -1306,12 +1345,20 @@ def getNostrEvents(filters, customRelayManager=None):
         theRelayManager.message_pool.auths.task_done()
     while theRelayManager.message_pool.has_events():
         event_msg = theRelayManager.message_pool.get_event()
+        rku = event_msg.url
+        if rku not in _relayeventcounter: 
+            _relayeventcounter[rku] = 1
+        else:
+            _relayeventcounter[rku] = _relayeventcounter[rku] + 1
         if event_msg.subscription_id == subscription_id:
             events.append(event_msg.event)
         else:
-            missevent += 1
+            missedevents.append(event_msg)
         theRelayManager.message_pool.events.task_done()
-    if missevent > 0: logger.debug(f"Missed {missevent} events in prior subscription")
+    if len(missedevents) > 0: 
+        logger.debug(f"Missed {len(missedevents)} events in prior subscription")
+        for me in missedevents:
+            logger.debug(f" from {me.url}, content: {me.event.content}")
     while theRelayManager.message_pool.has_eose_notices():
         eose_msg = theRelayManager.message_pool.get_eose_notice()
         theRelayManager.message_pool.eose_notices.task_done()
@@ -1522,35 +1569,40 @@ def processEvents(npub, responseEvents, botConfig):
         lightningId = getLightningIdForPubkey(pubkey)
         if not isValidLightningId(lightningId): 
             replyMessage = f"Unable to zap: Lightning address is invalid or incorrect format"
-            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         if lightningId in paidluds.keys(): 
             logger.debug(f"Lightning address {lightningId} was already paid for this event")
             replyMessage = f"Unable to zap: Lightning address was already paid for this event"
-            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         # get callback info and invoice
         lnurlPayInfo, lnurlp = lnurl.getLNURLPayInfo(lightningId)
         if not lnurl.isLNURLProviderAllowed(lightningId):
             logger.warning(f"LN Provider of identity {lightningId} is on the denyProviders list and cannot be zapped at this time")
             replyMessage = f"Unable to zap: Provider for {lightningId} is not allowed"
-            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         callback, bech32lnurl, userMessage = validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, amount)
         if callback is None or bech32lnurl is None or userMessage is not None: 
-            balance = replyToEvent(npub, k, pk, pubkey, userMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            replyMessage = userMessage
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         logger.debug(f"Preparing zap request for {amount} sats to {lightningId}")
         kind9734 = makeZapRequest(npub, botConfig, amount, zapMessage, pubkey, k, bech32lnurl)
@@ -1559,10 +1611,11 @@ def processEvents(npub, responseEvents, botConfig):
             logger.warning(f"LN Provider of identity {lightningId} did not provide a valid invoice.")
             logger.warning(f"{invoice}")
             replyMessage = f"Unable to zap: Provider for {lightningId} gave invalid invoice"
-            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         verifyUrl = invoice["verify"] if "verify" in invoice else None
         paymentRequest = invoice["pr"]
@@ -1572,22 +1625,27 @@ def processEvents(npub, responseEvents, botConfig):
             logger.warning(f"LN Provider of identity {lightningId} return an unacceptable invoice.")
             logger.warning(f"{invoice}")
             replyMessage = f"Unable to zap: Provider for {lightningId} returned unacceptable invoice with different amount. Possible scam."
-            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-            eventbalance -= (float(feesReplyMessage)/float(1000))
-            replies.append(k)
-            files.saveJsonFile(fileReplies, replies)
+            if not isMessageInReplies(replies, k, pubkey, replyMessage):
+                balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+                eventbalance -= (float(feesReplyMessage)/float(1000))
+                replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+                files.saveJsonFile(fileReplies, replies)
             continue
         # ok to pay
         paymentTime, paymentTimeISO = utils.getTimes()
-        paidnpubs[pubkey] = {"lightning_id":lightningId, "amount_sat": amount, "payment_time": paymentTime, "payment_time_iso": paymentTimeISO, "randomWinner": randomWinnerSlot}
-        paidluds[lightningId] = {"amount_sat": amount, "payment_time": paymentTime, "payment_time_iso": paymentTimeISO}
-        if verifyUrl is not None: paidnpubs[pubkey]["payment_verify_url"] = verifyUrl
-        balance = ledger.recordEntry(npub, "ZAPS", -1 * amount, 0, f"Zap {lightningId} for reply to {eventId}")
         paymentStatus, paymentFees, paymentHash, paymentIndex = lnd.payInvoice(paymentRequest)
-        balance = ledger.recordEntry(npub, "ROUTING FEES", 0, -1 * paymentFees, f"Zap {lightningId} for reply to {eventId}")
-        balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feesZapEvent, f"Service fee for zap {lightningId}")
-        eventbalance -= float(amount) + (float(paymentFees)/float(1000)) + (float(feesZapEvent)/float(1000))
-        paidnpubs[pubkey].update({'payment_status': paymentStatus, 'fee_msat': paymentFees, 'payment_hash': paymentHash, 'payment_index': paymentIndex})
+        if paymentStatus != "FAILED":
+            paidnpubs[pubkey] = {"lightning_id":lightningId, "amount_sat": amount, "payment_time": paymentTime, "payment_time_iso": paymentTimeISO, "randomWinner": randomWinnerSlot}
+            paidluds[lightningId] = {"amount_sat": amount, "payment_time": paymentTime, "payment_time_iso": paymentTimeISO}
+            if verifyUrl is not None: paidnpubs[pubkey]["payment_verify_url"] = verifyUrl
+            balance = ledger.recordEntry(npub, "ZAPS", -1 * amount, 0, f"Zap {lightningId} for reply to {eventId}")
+            balance = ledger.recordEntry(npub, "ROUTING FEES", 0, -1 * paymentFees, f"Zap {lightningId} for reply to {eventId}")
+            balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feesZapEvent, f"Service fee for zap {lightningId}")
+            eventbalance -= float(amount) + (float(paymentFees)/float(1000)) + (float(feesZapEvent)/float(1000))
+            paidnpubs[pubkey].update({'payment_status': paymentStatus, 'fee_msat': paymentFees, 'payment_hash': paymentHash, 'payment_index': paymentIndex})
+            if "activeServer" in lnd.config:
+                paymentServer = lnd.config["activeServer"]
+                paidnpubs[pubkey].update({'payment_server': paymentServer})
         # Save responses, paidnpubs, and paidluds after each payment
         files.saveJsonFile(fileResponses, responses)
         files.saveJsonFile(filePaidNpubs, paidnpubs)
@@ -1611,10 +1669,11 @@ def processEvents(npub, responseEvents, botConfig):
         pubkey = v["public_key"]
         if k not in responses: responses.append(k)
         replyMessage = v["content"]
-        balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
-        eventbalance -= (float(feesReplyMessage)/float(1000))
-        replies.append(k)
-        files.saveJsonFile(fileReplies, replies)
+        if not isMessageInReplies(replies, k, pubkey, replyMessage):
+            balance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
+            eventbalance -= (float(feesReplyMessage)/float(1000))
+            replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
+            files.saveJsonFile(fileReplies, replies)
 
     # close local relay manager if created
     if not _singleRelayManager and npubRelayManager is not None: 
@@ -1622,6 +1681,19 @@ def processEvents(npub, responseEvents, botConfig):
 
     # return the created_at value of the most recent event we processed
     return newest
+
+def isMessageInReplies(replies, k, pubkey, replyMessage):
+    for r in replies:
+        if type(r) is str: continue
+        if type(r) is dict:
+            if "id" not in r: continue
+            if "pubkey" not in r: continue
+            if "message" not in r: continue
+            if r["id"] != k: continue
+            if r["pubkey"] != pubkey: continue
+            if r["message"] != replyMessage: continue
+            return True
+    return False
 
 def replyToEvent(npub, eventHex, subbotPK, pubkey, replyMessage, feesReplyMessage):
     replyTags = [["e", eventHex]]

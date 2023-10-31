@@ -74,6 +74,8 @@ ENABLE
 
 DISABLE
 
+STATS
+
 STATUS
 
 SUPPORT <message to send to support>
@@ -667,6 +669,26 @@ When the bot recognizes the invoice as paid, a follow up message will be sent
 Invoice paid. 20000 credits have been applied to your account
 ```
 
+## STATS
+
+The `STATS` command reports summary stats of the number of zaps, replies and costs since last ledger rotation. A ledger rotation currently happens every 500 ledger entries.
+
+Example command:
+```user
+STATS
+```
+
+Example response:
+```bot
+Stats since the last ledger rotation on 2023-10-28T20:30:09
+CREDITS APPLIED: 10000 (0.000 total sats)
+ZAPS: 122 (-5221.000 total sats)
+REPLY MESSAGES: 212 (10.600 total sats)
+ROUTING FEES: 1 (-31.205 total sats)
+SERVICE FEES: 75 (-74.050 total sats)
+EVENTS MONITORED: 1
+```
+
 ## STATUS
 
 The `STATUS` command provides a simplified report of the configuration
@@ -677,7 +699,7 @@ STATUS
 ```
 
 Example response:
-```
+```bot
 The bot is configured with 5 relays, 2 conditions, and monitoring event 8016ac..a63bdf.
 
 Responses to the event matching conditions will be zapped up to 20 sats with the following message: Thanks for sharing your interpretation of today's #InkblotArt!
@@ -699,12 +721,12 @@ ENABLE
 ```
 
 Example response:
-```
+```bot
 Bot enabled!
 ```
 
 Example response for a validation error
-```
+```bot
 Unable to enable the bot. The eventId must be set. Use EVENT <event identifier>
 ```
 
@@ -718,7 +740,7 @@ DISABLE
 ```
 
 Example response:
-```
+```bot
 Bot disabled. Events will not be processed until re-enabled
 ```
 

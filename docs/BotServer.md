@@ -94,6 +94,8 @@ The `lnd` configuration section has these keys
 | feeLimit | The maximum amount to allow for routing fees for each payment, in sats |
 | connectTimeout | Time permitted in seconds to connect to LND |
 | readTimeout | Time permitted in seconds to read all data from LND |
+| activeServer | Optional name of a nested LND server configuration to use |
+| servers | Optional object containing LND server configurations |
 
 The `address` should be the ip address or fully qualified domain name to communicate with the LND server over REST
 
@@ -123,6 +125,10 @@ The `feeLimit` is the maximum amount of fees, in sats, that you are willing to p
 The `connectTimeout` is the number of seconds to allow for making a connection to LND.
 
 The `readTimeout` is the number of seconds to allow reading all data from LND.
+
+The `activeServer` is an optional parameter whose value indicates the key name that should exist within the optional servers json object.
+
+The `servers` field is an optional object that may contain nested LND server configurations that override the default values above when present and specified in the activeServer field.
 
 The LND server needs to be reachable from where the script is run.
 

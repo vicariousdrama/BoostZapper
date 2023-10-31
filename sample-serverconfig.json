@@ -56,7 +56,30 @@
         "connectTimeout.comment": "Time permitted in seconds to connect to LND",
         "connectTimeout": 5,
         "readTimeout.comment": "Time permitted in seconds to read all data from LND",
-        "readTimeout": 30
+        "readTimeout": 30,
+        "activeServer.comment": "Indicates the name of a nested LND server configuration to use. This permits quickly changing between configurations",
+        "activeServer": null,
+        "servers.comment": "An array of LND server configurations. Each is expected to have the same fields as described above",
+        "servers": {
+            "testing": {
+                "address": "127.0.0.1",
+                "port": "10080",
+                "macaroon": "0201036C.....",
+                "paymentTimeout": 30,
+                "feeLimit": 2,
+                "connectTimeout": 5,
+                "readTimeout": 30
+            },
+            "mainnet": {
+                "address": "127.0.0.2",
+                "port": "10080",
+                "macaroon": "0201036C.....",
+                "paymentTimeout": 30,
+                "feeLimit": 2,
+                "connectTimeout": 5,
+                "readTimeout": 30
+            }
+        }
     },
     "lnurl": {
         "connectTimeout.comment": "Time permitted in seconds to connect to LN URL Providers",
