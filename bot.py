@@ -17,75 +17,29 @@ import botutils as utils
 def processBots():
     global enabledBots
     global foundTracker
-    percentCheckOutstandingPayments = 50
     if len(enabledBots.keys()) > 0:
+        # next npub's config
         npub, eventHex = enabledBots.popitem(last=False)
         botConfig = nostr.getNpubConfigFile(npub)
+
+        # check outstanding payments status
         d100 = random.randint(1,100)
+        percentCheckOutstandingPayments = 25
         if d100 <= percentCheckOutstandingPayments:
-            # check outstanding payments status
             nostr.processOutstandingPayments(npub, botConfig)
-        since = -1
-        if "eventSince" in botConfig: since = botConfig["eventSince"]
-        if type(since) is not int: since = 0
-        if since < jan012020:
-            since = 0
-            if "eventCreated" in botConfig: since = botConfig["eventCreated"]
-            if type(since) is not int: since = 0
-            if since == 0:
-                event = nostr.getEventByHex(npub, eventHex)
-                if event is not None: 
-                    since = event.created_at
-                    nostr.setNostrFieldForNpub(npub, "eventCreated", since)
-                    nostr.setNostrFieldForNpub(npub, "eventSince", since)
-                    botConfig["eventCreated"] = since
-                    botConfig["eventSince"] = since
-                else:
-                    opnpub = nostr.getOperatorNpub()
-                    message = f"Event {eventHex} for {npub} wasn't found on relays"
-                    if opnpub is not None and opnpub == npub:
-                        nostr.sendDirectMessage(npub, message)
-                    logger.warning()
-        if since > jan012020:
-            until = since + timeChunk
-            currentTime, _ = utils.getTimes()
-            upToTip = (until > currentTime)
-            until = currentTime if upToTip else until
-            responseEvents = nostr.getResponseEventsForEvent(npub, eventHex, since, until)
-            newEventsCount = len(responseEvents)
-            npubStats = foundTracker[npub] if npub in foundTracker else {"replies":0,"checks":0}
-            npubStats["replies"] = npubStats["replies"] + newEventsCount
-            npubStats["checks"] = npubStats["checks"] + 1
-            logger.debug(f"Found {newEventsCount} events")
-            newsince = nostr.processEvents(npub, responseEvents, botConfig)
-            if upToTip:
-                # restart at beginning to retry historical that may have failed
-                # to get LN callback info with LN Provider
-                since = botConfig["eventCreated"]
-                npubStats["replies"] = 0
-                npubStats["checks"] = 0
-                logger.debug(f"Reached current time for {eventHex}, rechecking from posting time ({since})")
-            else:
-                # by default, bump the time chunk (2 hours)
-                since = since + timeChunk
-            foundTracker[npub] = npubStats
-            nostr.setNostrFieldForNpub(npub, "eventSince", since)
+
+        # get any new replies seen on relays
+        responseEvents = nostr.getEventReplies(eventHex)
+        newEventsCount = len(responseEvents)
+        logger.debug(f"Found {newEventsCount} replies to {eventHex}")
+
+        # process em!
+        newsince = nostr.processEvents(npub, responseEvents, botConfig)
     
     # When all bots processed
     if len(enabledBots.keys()) == 0:
         # Repopulate the list of enabled bots
         enabledBots = nostr.getEnabledBots()
-
-    # report if no responses found at tip for all bots
-    if len(foundTracker.keys()) == len(enabledBots) and len(enabledBots) > 0:
-        replies = 0
-        checks = 0
-        for npubStats in foundTracker.values():
-            replies = replies + npubStats["replies"]
-            checks = checks + npubStats["checks"]
-        if checks > 0 and replies == 0: 
-            logger.warning(f"No replies found for {checks} checks across {len(enabledBots)} events")
-            #nostr.reconnectRelays()
 
 def billForTime():
     global startTime
@@ -102,8 +56,8 @@ def billForTime():
                 balance = ledger.recordEntry(npub, "SERVICE FEES", 0, -1 * feeTime864 * unitsToBill, f"{unitsToBill} time unit monitoring event for past {secondsBilled} seconds")
             if balance < 0:
                 nostr.handleEnable(npub, False)
-                if npub in foundTracker:
-                    del foundTracker[npub]
+                # if npub in foundTracker:
+                #     del foundTracker[npub]
         unitsBilled += unitsToBill    
 
 if __name__ == '__main__':
@@ -165,8 +119,8 @@ if __name__ == '__main__':
     if "fees" in nostr.config: fees = nostr.config["fees"]
     if fees is not None and "time864" in fees: feeTime864 = fees["time864"]
 
-    foundTracker = {}
-    lastBotTime = 0
+    lastRelayReconnectTime = startTime
+    relayReconnectInterval = (30 * 60)
 
     # Bot loop
     while True:
@@ -175,27 +129,35 @@ if __name__ == '__main__':
         # process outstanding invoices
         lnd.checkInvoices()
 
-        if lastBotTime < loopStartTime - 30:
-            # process the next enabled bot (2 per minute)
-            processBots()
-            lastBotTime, _ = utils.getTimes()
-        else:
-            # look for command and control messages
-            newMessages = nostr.checkDirectMessages()
-            sleepTime = sleepMin if len(newMessages) > 0 else min(sleepTime * sleepGrowth, sleepMax)
-            # process the messages
-            nostr.processDirectMessages(newMessages)
+        # process the next enabled bot
+        processBots()
 
-        # process part of loop end time
-        loopEndTime, _ = utils.getTimes()
+        # look for command and control messages
+        newMessages = nostr.checkDirectMessages()
+        if len(newMessages) > 0:
+            sleepTime = sleepMin 
+            nostr.processDirectMessages(newMessages)
+        else:
+            sleepTime = min(sleepTime * sleepGrowth, sleepMax)
 
         # time billing
         billForTime()
 
-        # sleep if we can
-        noLaterThan = loopStartTime + sleepTime
-        if noLaterThan > loopEndTime:
-            time2sleep = noLaterThan - loopEndTime
-            if time2sleep > sleepMax: time2sleep = sleepMax
-            logger.debug(f"Sleeping {time2sleep} seconds")
-            time.sleep(time2sleep)
+        # process part of loop end time
+        loopEndTime, _ = utils.getTimes()
+
+        # reconnect relays if periodically
+        if lastRelayReconnectTime + relayReconnectInterval < loopEndTime:
+            nostr.reconnectRelays()
+            lastRelayReconnectTime, _ = utils.getTimes()
+        # otherwise, sleep if possible
+        else:
+            noLaterThan = loopStartTime + sleepTime
+            if noLaterThan > loopEndTime:
+                time2sleep = noLaterThan - loopEndTime
+                if time2sleep > sleepMax: time2sleep = sleepMax
+            else:
+                time2sleep = 2 # force it to avoid relay throttle
+            if time2sleep > 0:
+                logger.debug(f"Sleeping {time2sleep} seconds")
+                time.sleep(time2sleep)
