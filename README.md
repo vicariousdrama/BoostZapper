@@ -8,12 +8,29 @@ This project was prepared to support the #InkblotArt project by [Rex Damascus](h
 
 Supported NIPS
 
-- [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) : Basic Protocol Flow
-- [NIP-04](https://github.com/nostr-protocol/nips/blob/master/04.md) : Encrypted Direct Messages
-- [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) : Bech-32 Encoded Entities
-- [NIP-21](https://github.com/nostr-protocol/nips/blob/master/21.md) : URI Scheme
-- [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) : Client Authentication
-- [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) : Lightning Zaps
+| NIP | Description |
+| --- | --- |
+| [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Basic Protocol Flow |
+| [NIP-04](https://github.com/nostr-protocol/nips/blob/master/04.md) | Encrypted Direct Messages |
+| [NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Conventions for clients' use of e and p tags in text events |
+| [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) | Bech-32 Encoded Entities |
+| [NIP-21](https://github.com/nostr-protocol/nips/blob/master/21.md) | URI Scheme |
+| [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) | Reactions |
+| [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) | Client Authentication |
+| [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Lightning Zaps |
+
+---
+
+Supported Kinds
+
+| Kind | Description |
+| --- | --- |
+| 0 | Metadata |
+| 1 | Short Text Note |
+| 4 | Encrypted Direct Messages |
+| 7 | Reaction |
+| 9734 | Zap Request |
+| 22242 | Client Authentication |
 
 ---
 

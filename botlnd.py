@@ -315,6 +315,8 @@ def handlePaidInvoice(invoice):
     nostr.sendDirectMessage(npub, message)
     # Clear current invoice from nostr config for pub
     nostr.setNostrFieldForNpub(npub, "currentInvoice", {})
+    # Clear warning sent to allow it to trigger again when balance is low
+    nostr.setNostrFieldForNpub(npub, "balanceWarningSent", None)
 
 def handleCanceledInvoice(invoice):
     npub = invoice["npub"]
