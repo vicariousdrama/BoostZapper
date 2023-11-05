@@ -789,18 +789,19 @@ def getProfile(pubkeyHex):
     for profile in _monitoredProfiles:
         if profile.public_key != pubkeyHex:
             _monitoredProfilesTmp.append(profile)
+            continue
         if profile.created_at < created_at: continue
         if not isValidSignature(profile): continue
         try:
             ec = json.loads(profile.content)
             created_at = profile.created_at
             profileToUse = profile
-            _monitoredProfilesTmp.append(profileToUse)
             profileToReturn = dict(ec)
         except Exception as err:
             logger.warning(f"Error while getting profile for {pubkeyHex}")
             logger.eception(err)
             continue
+    if profileToUse is not None: _monitoredProfilesTmp.append(profileToUse)
     _monitoredProfiles = _monitoredProfilesTmp
     return profileToReturn, created_at
 
@@ -1707,7 +1708,10 @@ def processEvents(npub, responseEvents, botConfig):
                 if not re.search(pattern=requiredRegex, string=content, flags=re.IGNORECASE): continue
             if "randomWinnerLimit" in condition:
                 randomWinnerLimit = condition["randomWinnerLimit"]
-                if randomWinnerCount[conditionSlot] >= randomWinnerLimit: continue # hit threshold of this random payout
+                if randomWinnerCount[conditionSlot] >= randomWinnerLimit: 
+                    continue # hit threshold of this random payout
+                if pubkey in paidnpubs.keys():
+                    continue # only unpaid users elligible for random win condition
                 randomValue = random.randint(1, 100) # * randomWinnerLimit)
                 if randomValue <= (randomWinnerLimit - randomWinnerCount[conditionSlot]):
                     foundRandomWinner = True
@@ -1983,26 +1987,28 @@ def getLightningIdForPubkey(public_key):
         if type(v) is not dict: continue
         if "lightningId" not in v: continue
         if "created_at" not in v: continue
-        name = v["name"] if ("name" in v and v["name"] is not None) else "no name"
         if v["created_at"] > t - 86400: 
             lightningId = v["lightningId"]
             if str(lightningId).lower().startswith("lnurl"): 
                 lightningId = makeLightningIdFromLNURL(lightningId)
-            if lightningId is not None: return lightningId, name
+            if lightningId is not None: 
+                name = v["name"] if ("name" in v and v["name"] is not None) else "no name"
+                return lightningId, name
     # get profile from relays
     profile, created_at = getProfile(public_key)
     if profile is None: return lightningId, name
-    name = profile["name"] if ("name" in profile and profile["name"] is not None) else "no name"
     if "lud06" in profile and profile["lud06"] is not None:
         lnurl = profile["lud06"]
         if str(lnurl).lower().startswith("lnurl"):
             lightningId = makeLightningIdFromLNURL(lnurl)
             if lightningId is not None:
+                name = profile["name"] if ("name" in profile and profile["name"] is not None) else "no name"
                 lightningIdCache[public_key] = {
                     "lightningId": lightningId, "name":name, "created_at": created_at
                     }
     if "lud16" in profile and profile["lud16"] is not None: 
         lightningId = profile["lud16"]
+        name = profile["name"] if ("name" in profile and profile["name"] is not None) else "no name"
         if str(lightningId).lower().startswith("lnurl"): 
             lightningId = makeLightningIdFromLNURL(lightningId)
         lightningIdCache[public_key] = {
