@@ -20,6 +20,7 @@ Then install the dependencies
 python3 -m pip install nostr@git+https://github.com/vicariousdrama/python-nostr.git
 python3 -m pip install requests
 python3 -m pip install bech32
+python3 -m pip install boto3
 ```
 
 ## Configuring the Server
@@ -33,7 +34,7 @@ cp -n sample-serverconfig.json data/serverconfig.json
 
 Within this directory, a configuration file named `serverconfig.json` is read.  If this file does not exist, one will be created using the `sample-serverconfig.json`.
 
-The server configuration file is divided into 3 key sections. One for each of Nostr, Lightning Server, and LN URL Providers
+The server configuration file is divided into a few key sections. One for each of Nostr, Lightning Server, LN URL Providers, and Reports
 
 ### Nostr Config
 
@@ -153,6 +154,25 @@ The `connectTimeout` is the number of seconds to allow for making a connection t
 The `readTimeout` is the number of seconds to allow reading all data from a LN Url Provider.
 
 The `denyProviders` is an array of strings containing entries of domain names for LN Url Providers that should not receive zaps even if they support it. This is helpful to exclude domains that are problematic with respect to HTLCs and may result in channel closures or loss of funds.
+
+### Reports Configuration
+
+Edit the configuration
+
+```sh
+nano data/serverconfig.json
+```
+
+The `reports` configuration section has a key for `aws` and nested within are
+
+| key | description |
+| --- | --- |
+| enabled | Indicates whether s3 bucket upload is enabled |
+| aws_access_key_id | AWS Access Key ID credential with write access to the s3 Bucket |
+| aws_secret_access_key | AWS Secret Access Key credential with write access to the s3 Bucket |
+| s3Bucket | The s3 bucket into which report files will be stored |
+| baseKey | A folder path in the s3 bucket to use for the report files |
+| pepper | A string, code, phrase etc to salt the npub before hashing to prevent users from finding other users reports |
 
 ## Running the Bot
 

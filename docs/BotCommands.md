@@ -74,6 +74,8 @@ ENABLE
 
 DISABLE
 
+REPORTS
+
 STATS
 
 STATUS
@@ -667,6 +669,20 @@ When the bot recognizes the invoice as paid, a follow up message will be sent
 
 ```bot
 Invoice paid. 20000 credits have been applied to your account
+```
+
+## REPORTS
+
+The `REPORTS` command will return a URL for accessing reports for each event that was monitored, and the zaps made and routing fees.
+
+Example command:
+```user
+REPORTS
+```
+
+Example response:
+```bot
+Reports for events monitored, amount zapped and routing fees available at https://nostrnodeyez.s3.amazonaws.com/boostzapper/21def6feee4f527ab61968c02bb2781e/index.html
 ```
 
 ## STATS
