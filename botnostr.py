@@ -17,6 +17,7 @@ import botutils as utils
 import botledger as ledger
 import botlnd as lnd
 import botlnurl as lnurl
+import botreports as reports
 
 logger = None
 config = None
@@ -210,6 +211,8 @@ def processDirectMessages(messages):
             handleBalance(npub, content)
         elif firstWord == "CREDITS":
             handleCredits(npub, content)
+        elif firstWord == "REPORTS":
+            handleReports(npub, content)
         elif firstWord == "STATUS":
             handleStatus(npub, content)
         elif firstWord == "STATS":
@@ -287,6 +290,9 @@ def handleHelp(npub, content):
             handled = True
         elif secondWord == "DISABLE":
             message = "Disable your bot from processing events."
+            handled = True
+        elif secondWord == "REPORTS":
+            message = "Retrieve link to reports for the events monitored and zaps by the bot."
             handled = True
         elif secondWord == "STATUS":
             message = "Reports the current summary status for your bot account."
@@ -929,6 +935,10 @@ def handleEvent(npub, content):
         setNostrFieldForNpub(npub, "eventId", eventId)
     newEventId = getNostrFieldForNpub(npub, "eventId")
     if currentEventId != newEventId:
+        if currentEventId is not None:
+            # finalized event reporting
+            reports.makeEventReport(npub, currentEventId)
+            reports.makeIndex(npub)
         setNostrFieldForNpub(npub, "eventCreated", 0)
         setNostrFieldForNpub(npub, "eventSince", 0)
         eventBudget = getNostrFieldForNpub(npub, "eventBudget")
@@ -1104,6 +1114,14 @@ def handleEnable(npub, isEnabled):
     setNostrFieldForNpub(npub, "balanceWarningSent", None)
     sendDirectMessage(npub, "Bot enabled!")
 
+def handleReports(npub, content):
+    reportIndexUrl = reports.getReportIndexURL(npub)
+    if reportIndexUrl is None:
+        message = "Report server not available at this time"
+    else:
+        message = f"Reports for events monitored, amount zapped and routing fees available at {reportIndexUrl}"
+    sendDirectMessage(npub, message)
+
 def handleStatus(npub, content):
     helpMessage = None
     relaysCount = conditionsCount = 0
@@ -1253,7 +1271,12 @@ def getEnabledBots():
                         eventSince = eventCreated
                         if "eventId" in botConfig: 
                             oldId = utils.normalizeToBech32(utils.normalizeToHex(botConfig["eventId"]),"note")
-                            if oldId == newId: changeEvent = False
+                            if oldId == newId: 
+                                changeEvent = False
+                            else:
+                                # finalized event reporting
+                                reports.makeReport(npub, oldId)
+                                reports.makeIndex(npub)
                         else: changeEvent = True
                         if changeEvent:
                             logger.debug(f"New event found with id {newId}")
@@ -1775,7 +1798,7 @@ def processEvents(npub, responseEvents, botConfig):
         lightningId, name = getLightningIdForPubkey(pubkey)
         valid, message = isValidLightningId(lightningId)
         if not valid: 
-            logger.debug(f"{message} (for pubkey: {pubkey}")
+            logger.debug(f"{message} ({name} with pubkey: {pubkey})")
             replyMessage = f"Unable to zap: {message}"
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
                 newbalance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
@@ -1784,12 +1807,12 @@ def processEvents(npub, responseEvents, botConfig):
                 files.saveJsonFile(fileReplies, replies)
             continue
         if lightningId in paidluds.keys(): 
-            logger.debug(f"Lightning address {lightningId} (name: {name}, pubkey: {pubkey}) was already paid for this event")
+            logger.debug(f"Lightning address {lightningId} was already paid for this event ({name} with pubkey: {pubkey})")
             continue
         # get callback info and invoice
         lnurlPayInfo, lnurlp = lnurl.getLNURLPayInfo(lightningId)
         if not lnurl.isLNURLProviderAllowed(lightningId):
-            logger.warning(f"LN Provider of identity {lightningId} is on the denyProviders list and cannot be zapped at this time")
+            logger.warning(f"LN Provider of identity {lightningId} is on the denyProviders list and cannot be zapped at this time ({name} with pubkey: {pubkey})")
             replyMessage = f"Unable to zap: Provider for {lightningId} is not allowed"
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
                 newbalance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
@@ -1806,13 +1829,13 @@ def processEvents(npub, responseEvents, botConfig):
                 replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
                 files.saveJsonFile(fileReplies, replies)
             continue
-        logger.debug(f"Preparing zap request for {amount} sats to {lightningId}")
+        logger.debug(f"Preparing zap request for {amount} sats to {lightningId} ({name})")
         kind9734 = makeZapRequest(npub, botConfig, amount, zapMessage, pubkey, k, bech32lnurl)
         invoice = lnurl.getInvoiceFromZapRequest(callback, amount, kind9734, bech32lnurl)
         if not lnurl.isValidInvoiceResponse(invoice):
             logger.warning(f"LN Provider of identity {lightningId} did not provide a valid invoice.")
             logger.warning(f"{invoice}")
-            replyMessage = f"Unable to zap: Provider for {lightningId} gave invalid invoice"
+            replyMessage = f"Unable to zap: Provider for {lightningId} gave invalid invoice ({name} with pubkey: {pubkey})"
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
                 newbalance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
                 eventbalance -= balance - newbalance; balance = newbalance
@@ -1824,7 +1847,7 @@ def processEvents(npub, responseEvents, botConfig):
         decodedInvoice = lnd.decodeInvoice(paymentRequest)
         lnd.recordPaymentDestination(decodedInvoice)
         if not isValidInvoiceAmount(decodedInvoice, amount): 
-            logger.warning(f"LN Provider of identity {lightningId} return an unacceptable invoice.")
+            logger.warning(f"LN Provider of identity {lightningId} return an unacceptable invoice. ({name} with pubkey: {pubkey})")
             logger.warning(f"{invoice}")
             replyMessage = f"Unable to zap: Provider for {lightningId} returned unacceptable invoice with different amount. Possible scam."
             if not isMessageInReplies(replies, k, pubkey, replyMessage):

@@ -9,13 +9,15 @@ logger = None       # set by calling setLogger
 # Make common folders if not already present
 dataFolder = "data/"
 userConfigFolder = f"{dataFolder}userConfigs/"
-userLedgerFolder = f"{dataFolder}userLedgers/"
 userEventsFolder = f"{dataFolder}userEvents/"
+userLedgerFolder = f"{dataFolder}userLedgers/"
+userReportsFolder = f"{dataFolder}userReports/"
 logFolder = f"{dataFolder}logs/"
 utils.makeFolderIfNotExists(dataFolder)
 utils.makeFolderIfNotExists(userConfigFolder)
-utils.makeFolderIfNotExists(userLedgerFolder)
 utils.makeFolderIfNotExists(userEventsFolder)
+utils.makeFolderIfNotExists(userLedgerFolder)
+utils.makeFolderIfNotExists(userReportsFolder)
 utils.makeFolderIfNotExists(logFolder)
 
 def loadJsonFile(filename, default=None):

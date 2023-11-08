@@ -12,6 +12,7 @@ import botledger as ledger
 import botlnd as lnd
 import botlnurl as lnurl
 import botnostr as nostr
+import botreports as reports
 import botutils as utils
 
 def processBots():
@@ -79,6 +80,7 @@ if __name__ == '__main__':
     lnd.logger = logger
     lnurl.logger = logger
     nostr.logger = logger
+    reports.logger = logger
 
     # Load server config
     serverConfig = files.getConfig(f"{files.dataFolder}serverconfig.json")
@@ -90,12 +92,16 @@ if __name__ == '__main__':
     nostr.config = serverConfig["nostr"]
     lnd.config = serverConfig["lnd"]
     lnurl.config = serverConfig["lnurl"]
+    reports.config = serverConfig["reports"]
 
     # Connect to relays
     nostr.connectToRelays()
 
     # Load Lightning ID cache
     nostr.loadLightningIdCache()
+
+    # Build and upload reports
+    reports.makeAllReports()
 
     # Update bot profile if changed
     nostr.checkMainBotProfile()

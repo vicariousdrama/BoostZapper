@@ -90,5 +90,15 @@
         "denyProviders": [
             "zeuspay.com"
         ]
+    },
+    "reports": {
+        "aws": {
+            "enabled": false,
+            "aws_access_key_id": null,
+            "aws_secret_access_key": null,
+            "s3Bucket": null,
+            "baseKey": "boostzapper",
+            "pepper": "Some will fall in love with life and drink it from a fountain"
+        }
     }
 }
