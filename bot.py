@@ -63,6 +63,8 @@ def billForTime():
 
 if __name__ == '__main__':
 
+    startTime, _ = utils.getTimes()
+
     # Logging to systemd
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -102,6 +104,8 @@ if __name__ == '__main__':
 
     # Build and upload reports
     reports.makeAllReports()
+    lastReportTime = startTime
+    makeReportsInterval = (1 * 60 * 60)
 
     # Update bot profile if changed
     nostr.checkMainBotProfile()
@@ -116,7 +120,6 @@ if __name__ == '__main__':
     sleepTime = sleepMin
 
     jan012020 = 1577836800
-    startTime, _ = utils.getTimes()
     timeChunk = 2 * 60 * 60 # 2 hours
     upTime = 0
     unitsBilled = 0
@@ -151,6 +154,11 @@ if __name__ == '__main__':
 
         # process part of loop end time
         loopEndTime, _ = utils.getTimes()
+
+        # make reports periodically
+        if lastReportTime + makeReportsInterval < loopEndTime:
+            reports.makeAllReports()
+            lastReportTime, _ = utils.getTimes()
 
         # reconnect relays if periodically
         if lastRelayReconnectTime + relayReconnectInterval < loopEndTime:

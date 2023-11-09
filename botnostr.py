@@ -931,7 +931,7 @@ def handleEvent(npub, content):
     currentEventId = getNostrFieldForNpub(npub, "eventId")
     words = content.split()
     if len(words) > 1:
-        eventId = utils.normalizeToBech32(words[1], "nevent")
+        eventId = utils.normalizeToBech32(words[1], "note")
         setNostrFieldForNpub(npub, "eventId", eventId)
     newEventId = getNostrFieldForNpub(npub, "eventId")
     if currentEventId != newEventId:
@@ -1275,7 +1275,7 @@ def getEnabledBots():
                                 changeEvent = False
                             else:
                                 # finalized event reporting
-                                reports.makeReport(npub, oldId)
+                                reports.makeEventReport(npub, oldId)
                                 reports.makeIndex(npub)
                         else: changeEvent = True
                         if changeEvent:
