@@ -1,0 +1,18 @@
+# BoostZapper: systemd unit for starting the BoostZapper bot
+# /etc/systemd/system/boostzapper-bot.service
+
+[Unit]
+Description=BoostZapper Bot
+StartLimitIntervalSec=600
+StartLimitBurst=2
+
+[Service]
+EnvironmentFile=/etc/nodeyez.conf
+WorkingDirectory=/home/boostzapper/boostzapper
+ExecStart=/home/boostzapper/.pyenv/boostzapper/bin/python3 /home/boostzapper/boostzapper/bot.py
+User=boostzapper
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

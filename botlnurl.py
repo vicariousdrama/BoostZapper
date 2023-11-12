@@ -55,6 +55,13 @@ def isLNURLProviderAllowed(identity):
             return False
     return True
 
+def isLNURLCallbackAllowed(callback):
+    if "denyProviders" not in config: return True
+    parseresult = urllib.parse.urlparse(callback)
+    if parseresult.netloc in config["denyProviders"]:
+        return False
+    return True
+
 def getInvoiceFromZapRequest(callback, satsToZap, zapRequest, bech32lnurl):
     logger.debug(f"Requesting invoice from LNURL service using zap request")
     encoded = getEncodedZapRequest(zapRequest)
