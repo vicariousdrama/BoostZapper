@@ -2085,6 +2085,14 @@ def validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, amount):
         userMessage = f"Unable to zap: Provider for {lightningId} permits no more than {maxSendable} msats to be zapped"
         return callback, bech32lnurl, userMessage
     callback = lnurlPayInfo["callback"]
+    if callback is None:
+        logger.debug(f"LN Provider of identity {lightningId} does not have a callback url. Skipping")
+        userMessage = f"Unable to zap: Provider for {lightningId} does not have a callback url."
+        return callback, bech32lnurl, userMessage
+    elif not lnurl.isLNURLCallbackAllowed(callback):
+        logger.debug(f"LN Callback of identity {lightningId} is on the denyProviders list and cannot be zapped at this time ({name} with pubkey: {pubkey})")
+        userMessage = f"Unable to zap: Callback for {lightningId} is not allowed"
+        return callback, bech32lnurl, userMessage
     lnurlpBytes = bytes(lnurlp,'utf-8')
     lnurlpBits = bech32.convertbits(lnurlpBytes,8,5)
     bech32lnurl = bech32.bech32_encode("lnurl", lnurlpBits)

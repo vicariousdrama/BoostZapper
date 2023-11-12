@@ -4,6 +4,32 @@ The BoostZapper bot monitors Nostr events for replies that may contain key phras
 
 When a user replies to a Nostr event that is actively being monitored, the bot reviews it to determine if the contents trigger an automatic reply message and/or zap to be sent to the user.  Only one zap per user, per event being monitored will be sent.
 
+## Using the install script
+
+For convenience, an installer script has been prepared that will create a dedicated boostzapper user, clone the repository, setup python environment with dependencies and install a service script.  
+
+```sh
+wget -qO- https://raw.githubusercontent.com/vicariousdrama/BoostZapper/main/botinstall.sh | sudo bash
+```
+
+If you use this script, you should change to the boostzapper user
+
+```sh
+sudo su boostzapper
+
+cd /home/boostzapper/BoostZapper
+```
+
+... and then continue with the [Configuring the Server](#configuring-the-server) section.
+
+## Clone the repository
+
+To setup bot, you'll first need to clone the repository
+
+```sh
+git clone https://github.com/vicariousdrama/BoostZapper.git
+```
+
 ## Preparation of Python Environment
 
 To use this script, you'll need to run it with python 3.9 or higher and with the nostr, requests and bech32 packages installed.
@@ -187,3 +213,12 @@ The console will show output reflecting each event being analyzed.
 For further assistance or customizations, reach out to the developer on Nostr
 - NIP05: vicariousdrama@nodeyez.com
 - NPUB: npub1yx6pjypd4r7qh2gysjhvjd9l2km6hnm4amdnjyjw3467fy05rf0qfp7kza
+
+Press `Control+C` to stop the bot process when satisfied its running properly.
+
+If you used the installer script, a service was deployed named boostzapper-bot. This will be automatically run on startup, and can be started via
+
+```sh
+sudo systemctl start boostzapper-bot
+```
+
