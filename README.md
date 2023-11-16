@@ -6,7 +6,7 @@ This project was prepared to support the #InkblotArt project by [Rex Damascus](h
 
 ---
 
-Supported NIPS
+## Supported NIPS
 
 | NIP | Description |
 | --- | --- |
@@ -21,7 +21,7 @@ Supported NIPS
 
 ---
 
-Supported Kinds
+## Supported Kinds
 
 | Kind | Description |
 | --- | --- |
@@ -34,14 +34,31 @@ Supported Kinds
 
 ---
 
-## [Boost Zapper Bot](./docs/BotServer.md)
+## Boost Zapper Setup
+
+### [Boost Zapper Bot](./docs/BotServer.md)
 The primary bot logic that looks for events.  Start here if you want to set up the bot as an operator with an LND server.
 
-## [Bot Commands](./docs/BotCommands.md)
+### [Bot Commands](./docs/BotCommands.md)
 For Users that want to configure the Zapper Bot for their own events and rules, this document provides the full list of commands. These commands are sent to Nostr users that direct message the bot for HELP.
 
-## [One Off Script](./docs/BoostZapper.md)
-The original Boost Zapper script proof of concept that runs a check for events and zaps based on conditions. Configuration differs slightly from that used for the Bot.
+---
 
-## [Vanity Gen](./docs/vanitygen.md)
-Simple script to calculate a vanity npub
+## Helper Scripts
+
+These scripts may be useful for those seeking smaller scripts to learn from.
+
+### [One Off Script](./docs/BoostZapper.md)
+The original Boost Zapper script proof of concept that runs a check for events and zaps based on conditions. Configuration differs slightly from that used for the Bot.  This is no longer supported and may not function any longer but is provided for posterity as a smaller subset of the current bot logic
+
+### [Vanity Gen](./docs/vanitygen.md)
+Simple script to calculate a vanity npub using the python-nostr library.  While functional, a more performant program would leverage multiple threads and likely be written in c, golang or rust
+
+### [Sample Events](./docs/SampleEvents.md)
+Simple script to dump some recent sample events by kind. This is very trivial mainly for diagnosis.
+
+### [Sign and Send](./docs/SignAndSend.md)
+Simple script that reads a json file, signs with the bot in server config, and sends to relays.
+
+### [Calendar Maker](./docs/CalendarMaker.md)
+A simple script that builds a calendar encompassing multiple events based on inputs
