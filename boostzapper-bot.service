@@ -7,9 +7,8 @@ StartLimitIntervalSec=600
 StartLimitBurst=2
 
 [Service]
-EnvironmentFile=/etc/nodeyez.conf
-WorkingDirectory=/home/boostzapper/boostzapper
-ExecStart=/home/boostzapper/.pyenv/boostzapper/bin/python3 /home/boostzapper/boostzapper/bot.py
+WorkingDirectory=/home/boostzapper/BoostZapper
+ExecStart=/home/boostzapper/.pyenv/boostzapper/bin/python3 /home/boostzapper/BoostZapper/bot.py
 User=boostzapper
 Restart=on-failure
 RestartSec=30
