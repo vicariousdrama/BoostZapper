@@ -1830,7 +1830,7 @@ def processEvents(npub, responseEvents, botConfig):
                 replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
                 files.saveJsonFile(fileReplies, replies)
             continue
-        callback, bech32lnurl, userMessage = validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, amount)
+        callback, bech32lnurl, userMessage = validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, name, amount, pubkey)
         if callback is None or bech32lnurl is None or userMessage is not None: 
             replyMessage = userMessage
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
@@ -2058,7 +2058,7 @@ def isValidLightningId(lightningId):
         return False, f"Lightning address {lightningId} is invalid - not in username@domain format"
     return True, None
 
-def validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, amount):
+def validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, name, amount, pubkey):
     callback = None
     bech32lnurl = None
     userMessage = None
