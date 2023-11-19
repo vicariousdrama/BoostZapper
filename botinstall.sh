@@ -71,10 +71,12 @@ else
 fi
 # ensure python modules we depend on are present in the virtual environment
 echo "ensuring required modules..."
-sudo -u boostzapper -s source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade \
-    bech32 boto3 requests
-sudo -u boostzapper -s source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade \
-    nostr@git+https://github.com/vicariousdrama/python-nostr.git
+#sudo -u boostzapper -s source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade \
+#    bech32 boto3 requests
+#sudo -u boostzapper -s source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade \
+#    nostr@git+https://github.com/vicariousdrama/python-nostr.git
+sudo -u boostzapper bash -c "source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade bech32 boto3 requests"
+sudo -u boostzapper bash -c "source /home/boostzapper/.pyenv/boostzapper/bin/activate && /home/boostzapper/.pyenv/boostzapper/bin/python3 -m pip install --upgrade nostr@git+https://github.com/vicariousdrama/python-nostr.git"
 
 # Services
 echo "================================================"
