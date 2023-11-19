@@ -772,7 +772,8 @@ def getProfile(pubkeyHex):
     logger.debug(f"Getting profile information for {pubkeyHex}")
     filters = Filters([Filter(kinds=[EventKind.SET_METADATA],authors=[pubkeyHex])])
     botPrivateKey = getBotPrivateKey()
-    subscription_id = "my_profiles"
+    t, _ = utils.getTimes()
+    subscription_id = f"my_profiles_{t}"
     request = [ClientMessageType.REQUEST, subscription_id]
     request.extend(filters.to_json_array())
     message = json.dumps(request)
@@ -1313,7 +1314,8 @@ def getEventByHex(npub, eventHex):
     filters = Filters([Filter(event_ids=[eventHex])])
     events = []
     botPrivateKey = getBotPrivateKey()
-    subscription_id = "my_eventbyid"
+    t, _ = utils.getTimes()
+    subscription_id = f"my_eventbyid_{t}"
     request = [ClientMessageType.REQUEST, subscription_id]
     request.extend(filters.to_json_array())
     message = json.dumps(request)
@@ -1469,6 +1471,8 @@ def getEventReplies(eventHex):
     filters_events = None
     for relayConfig in botRelayManager.relays.values():
         found = False
+        if relayConfig.url == "wss://nostr-01.yakihonne.com":
+            logger.debug(f"Yakihonne relay config: {relayConfig}")
         for subId in relayConfig.subscriptions.keys():
             if subId == subscription_events: 
                 found = True
@@ -1489,13 +1493,19 @@ def getEventReplies(eventHex):
             else:
                 filters_events[0].event_refs.append(eventHex)            
             if needToAdd:
+                if relayConfig.url == "wss://nostr-01.yakihonne.com":
+                    logger.debug(f"Adding subscription {subscription_events} to {relayConfig.url}")
                 filters_events = Filters([Filter(event_refs=[eventHex],kinds=[EventKind.TEXT_NOTE],since=filtersince)])
                 relayConfig.add_subscription(id=subscription_events, filters=filters_events)
                 added = True
             elif not hasEvent:
+                if relayConfig.url == "wss://nostr-01.yakihonne.com":
+                    logger.debug(f"Updating subscription {subscription_events} for {relayConfig.url}")
                 relayConfig.update_subscription(id=subscription_events, filters=filters_events)
                 updated = True
         else:
+            if relayConfig.url == "wss://nostr-01.yakihonne.com":
+                logger.debug(f"Adding subscription {subscription_events} to {relayConfig.url}")
             filters_events = Filters([Filter(event_refs=[eventHex],kinds=[EventKind.TEXT_NOTE],since=filtersince)])
             relayConfig.add_subscription(id=subscription_events, filters=filters_events)
             added = True
@@ -2027,7 +2037,7 @@ def getLightningIdForPubkey(public_key):
             if lightningId is not None:
                 name = profile["name"] if ("name" in profile and profile["name"] is not None) else "no name"
                 lightningIdCache[public_key] = {
-                    "lightningId": lightningId, "name":name, "created_at": created_at
+                    "lightningId": lightningId, "name":name, "created_at": t
                     }
     if "lud16" in profile and profile["lud16"] is not None: 
         lightningId = profile["lud16"]
@@ -2035,7 +2045,7 @@ def getLightningIdForPubkey(public_key):
         if str(lightningId).lower().startswith("lnurl"): 
             lightningId = makeLightningIdFromLNURL(lightningId)
         lightningIdCache[public_key] = {
-            "lightningId": lightningId, "name":name, "created_at": created_at
+            "lightningId": lightningId, "name":name, "created_at": t
             }
     if lightningId is not None: saveLightningIdCache()
     return lightningId, name
