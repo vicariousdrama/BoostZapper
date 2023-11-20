@@ -1472,7 +1472,7 @@ def getEventReplies(eventHex):
     for relayConfig in botRelayManager.relays.values():
         found = False
         if relayConfig.url == "wss://nostr-01.yakihonne.com":
-            logger.debug(f"Yakihonne relay config: {relayConfig}")
+            logger.debug(f"Yakihonne relay config: {relayConfig.to_json_object()}")
         for subId in relayConfig.subscriptions.keys():
             if subId == subscription_events: 
                 found = True

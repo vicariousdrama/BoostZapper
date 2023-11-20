@@ -42,9 +42,16 @@ if __name__ == '__main__':
     # Look at arguments
     argField = "kind"
     argValue = ""
+    tagLetter = ""
+    tagValueList = []
+    tags = []
     if len(sys.argv) > 1:
         for argValue in sys.argv[1:]:
             if argValue.startswith("--"):
+                if len(tagValueList) > 0:
+                    tags.append([tagLetter,tagValueList])
+                    tagLetter = ""
+                    tagValueList = []
                 argField = str(argValue[2:]).lower()
             else:
                 logger.debug(f"Assigning value {argValue} to {argField}")
@@ -53,6 +60,12 @@ if __name__ == '__main__':
                 if argField == "until": until = int(argValue)
                 if argField == "limit": limit = int(argValue)
                 if argField == "author": author = argValue
+                if argField == "tag": 
+                    if tagLetter == "":
+                        tagLetter = argValue
+                    else:
+                        tagValueList.append(argValue)
+    if len(tagValueList) > 0: tags.append([tagLetter,tagValueList])
     authors = None if author is None else [author]
 
     # Connect to relays
@@ -60,7 +73,10 @@ if __name__ == '__main__':
 
     # Retreive notes
     subscription_id = f"my_events"
-    filters_events = Filters([Filter(kinds=[kind],authors=authors,limit=limit,since=since,until=until)])
+    filter = Filter(kinds=[kind],authors=authors,limit=limit,since=since,until=until)
+    for t in tags:
+        filter.add_arbitrary_tag(t[0], t[1])
+    filters_events = Filters([filter])
     nostr.botRelayManager.add_subscription(id=subscription_id, filters=filters_events)
     request = [ClientMessageType.REQUEST, subscription_id]
     request.extend(filters_events.to_json_array())
