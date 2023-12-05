@@ -3,6 +3,7 @@ from nostr.key import PrivateKey
 
 lookfor = "jess"
 lookfor = "23456789"
+lookfor = "696969"
 
 # not supported:  b i o 1
 # a e u 

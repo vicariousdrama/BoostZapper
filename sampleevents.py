@@ -81,6 +81,8 @@ if __name__ == '__main__':
     request = [ClientMessageType.REQUEST, subscription_id]
     request.extend(filters_events.to_json_array())
     message = json.dumps(request)
+    logger.debug(message)
+    logger.debug("---")
     nostr.botRelayManager.publish_message(message)
     time.sleep(nostr._relayPublishTime)
     nostr.siftMessagePool()
