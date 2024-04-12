@@ -32,6 +32,8 @@ _relayReconnectExisting = False     # when  true, locks up in r.check_reconnect
 _relayeventcounter = {}
 _replyDebugMessages = False         # controls whether debug messages send text as user reply
 _replyDebugReactions = True         # controls whether debug messags send caution reaction
+_inboxoutbox = True
+pubkeyrelays = {}                   # tracks relay list metadata for arbitrary pubkeys
 def connectToRelays():
     logger.debug("Connecting to relays")
     global botRelayManager
@@ -76,7 +78,7 @@ def getNpubConfigFile(npub):
     return npubConfig
 
 def getBotPrivateKey():
-    if "botnsec" not in config: 
+    if "botnsec" not in config:
         logger.warning("Server config missing 'botnsec' in nostr section.")
         quit()
     botNsec = config["botnsec"]
@@ -87,7 +89,7 @@ def getBotPrivateKey():
     return botPrivkey
 
 def getBotPubkey():
-    if "botnpub" not in config: 
+    if "botnpub" not in config:
         botPrivkey = getBotPrivateKey()
         if botPrivkey is None: return None
         config["botnpub"] = botPrivkey.public_key.hex()
@@ -119,7 +121,7 @@ def sendDirectMessage(npub, message):
             if exclude["npub"] == npub:
                 logger.debug("Not sending direct message to excluded npub: {npub}")
                 return
-            if exclude["npub"] == recipient_pubkey: 
+            if exclude["npub"] == recipient_pubkey:
                 logger.debug("Not sending direct message to excluded pubkey: {recipient_pubkey}")
                 return
     dm = EncryptedDirectMessage(
@@ -129,6 +131,13 @@ def sendDirectMessage(npub, message):
     getBotPrivateKey().sign_event(dm)
     botRelayManager.publish_event(dm)
     time.sleep(_relayPublishTime)
+    # write to recipient read relays
+    if _inboxoutbox:
+        pubkeyRelay = getInboxRelayManagerForPubkey(recipient_pubkey)
+        if pubkeyRelay is not None:
+            pubkeyRelay.publish_event(dm)
+            time.sleep(_relayPublishTime)
+            pubkeyRelay.close_connections()
 
 def removeSubscription(relaymanager, subid):
     request = [ClientMessageType.CLOSE, subid]
@@ -149,7 +158,7 @@ def checkDirectMessages():
             handledMessages[event.id] = event.created_at
     return newMessages
 
-def isValidSignature(event): 
+def isValidSignature(event):
     sig = event.signature
     id = event.id
     publisherPubkey = event.public_key
@@ -170,7 +179,7 @@ def processDirectMessages(messages):
         if "forwardDirectMessagesToOperator" in config:
             forwards = config["forwardDirectMessagesToOperator"]
             operatornpub = getOperatorNpub()
-            if operatornpub is not None:            
+            if operatornpub is not None:
                 for forward in forwards:
                     if "npub" not in forward: continue
                     if forward["npub"] == npub:
@@ -308,7 +317,7 @@ def handleHelp(npub, content):
         message = "This bot zaps responses to events based on rules you define. For detailed help, reply HELP followed by the command (e.g. HELP RELAYS)."
         message = f"{message}\nCommands: "
         message = f"{message} FEES, "
-        if not _singleRelayManager: 
+        if not _singleRelayManager:
             message = f"{message} RELAYS, "
         message = f"{message} CONDITIONS, "
         message = f"{message} PROFILE, "
@@ -367,6 +376,84 @@ def incrementNostrFieldForNpub(npub, fieldname, amount):
     files.saveJsonFile(filename, npubConfig)
     return newValue
 
+# pubkey is a user
+def getRelayListMetadataForPubkey(pubkey):
+    global _monitoredRelayListMetadata
+    logger.debug(f"Getting relay list metadata for {pubkey}")
+    filters = Filters([Filter(kinds=[10002],authors=[pubkey])])
+    botPrivateKey = getBotPrivateKey()
+    t, _ = utils.getTimes()
+    subscription_id = f"pubkey_rlm_{t}"
+    request = [ClientMessageType.REQUEST, subscription_id]
+    request.extend(filters.to_json_array())
+    message = json.dumps(request)
+    botRelayManager.add_subscription(subscription_id, filters)
+    botRelayManager.publish_message(message)
+    time.sleep(_relayPublishTime)
+    # Check if needed to authenticate and publish again if need be
+    if authenticateRelays(botRelayManager, botPrivateKey):
+        botRelayManager.publish_message(message)
+        time.sleep(_relayPublishTime)
+    # Sift through messages
+    siftMessagePool()
+    # Remove this subscription
+    removeSubscription(botRelayManager, subscription_id)
+    # Find the relay list metadata
+    rlmToUse = None
+    created_at = 0
+    _tmp = []
+    for rlm in _monitoredRelayListMetadata:
+        if rlm.public_key != pubkey:
+            _tmp.append(rlm)
+            continue
+        if rlm.created_at < created_at: continue
+        if not isValidSignature(rlm): continue
+        if rlm.created_at > created_at:
+            created_at = rlm.created_at
+            rlmToUse = rlm
+    if rlmToUse is not None: _tmp.append(rlmToUse)
+    _monitoredRelayListMetadata = _tmp
+    return rlmToUse
+
+# pubkey is a recipient (not one of our buts) that may be talking via DM, or we are replying to as kind 1
+# this will either return a relay manager that has the relays the target pubkey reads from (their inbox)
+# or will return as None if no information was found. simple caching by way of pubkeyrelays
+def getInboxRelayManagerForPubkey(pubkey):
+    return getInboxOrOutboxRelayManagerForPubkey(pubkey, "read")
+
+# pubkey is an entity (not one of our bots) that will have posted an event for which other users are
+# replying to. This will either return a relay manager that has the relays the target pubkey wrote to
+# (their outbox) or will return as None if no information was found. simple caching byway of pubkeyrelays
+def getOutboxRelayManagerForPubkey(pubkey):
+    return getInboxOrOutboxRelayManagerForPubkey(pubkey, "write")
+
+def getInboxOrOutboxRelayManagerForPubkey(pubkey, acl):
+    global pubkeyrelays
+    if pubkey not in pubkeyrelays:
+        relayEvent = getRelayListMetadataForPubkey(pubkey)
+        pubkeyrelays[pubkey] = relayEvent
+    if pubkey not in pubkeyrelays:
+        return None
+    relayEvent = pubkeyrelays[pubkey]
+    if relayEvent is None:
+        return None
+    newRelayManager = None
+    relayCount = 0
+    for tag in relayEvent.tags:
+        if len(tag) < 2: continue
+        if tag[0] != "r": continue
+        if len(tag) > 2 and tag[2] != acl: continue
+        relayUrl = tag[1]
+        relayCount = relayCount + 1
+        if relayCount == 1:
+            newRelayManager = RelayManager()
+        newRelayManager.add_relay(url=relayUrl)
+    if relayCount > 0:
+        newRelayManager.open_connections({"cert_reqs": ssl.CERT_NONE}) # NOTE: This disables ssl certificate verification
+        time.sleep(_relayConnectTime)
+    return newRelayManager
+
+# npub is a bot
 def getNostrRelaysForNpub(npub, npubConfig = None):
     if npubConfig is None: npubConfig = getNpubConfigFile(npub)
     relays = getNostrRelaysFromConfig(npubConfig)
@@ -381,6 +468,7 @@ def getNostrRelaysForNpub(npub, npubConfig = None):
             relays.append(relay)
     return relays
 
+# config of bot
 def getNostrRelaysFromConfig(aConfig):
     relays = []
     relayUrls = []
@@ -462,7 +550,7 @@ def handleRelays(npub, content):
                     newItem = {"url":item, "read": True, "write": True}
                     newList.append(newItem)
                 if type(item) is dict:
-                    newList.append(item)                   
+                    newList.append(item)
             if hasStrings: theList = newList
             # look for existing relay url in list
             found = False
@@ -570,10 +658,10 @@ def handleConditions(npub, content):
     conditions = getNostrConditionsForNpub(npub)
     words = content.split()
     supportedArguments = {
-        "amount": "amount", 
-        "requiredlength": "requiredLength", 
-        "requiredphrase": "requiredPhrase", 
-        "requiredregex": "requiredRegex", 
+        "amount": "amount",
+        "requiredlength": "requiredLength",
+        "requiredphrase": "requiredPhrase",
+        "requiredregex": "requiredRegex",
         "randomwinnerlimit": "randomWinnerLimit",
         "replymessage": "replyMessage"
     }
@@ -586,7 +674,7 @@ def handleConditions(npub, content):
             if len(words) > 2:
                 commandWord = None
                 newCondition = {
-                    "amount":0, 
+                    "amount":0,
                     "requiredlength":0,
                     "requiredphrase":None
                     }
@@ -739,7 +827,7 @@ def handleProfile(npub, content):
                         profile[commandWord] = combinedWords
                     commandWord = word
             else:
-                combinedWords = f"{combinedWords} {word}" if len(combinedWords) > 0 else word                
+                combinedWords = f"{combinedWords} {word}" if len(combinedWords) > 0 else word
         if commandWord is not None:
             if profile[commandWord] != combinedWords:
                 hasChanges = True
@@ -818,17 +906,17 @@ def checkMainBotProfile():
     needsUpdated = (profileOnRelays is None)
     if not needsUpdated:
         configProfile = config["botProfile"]
-        kset = ("name","about","nip05","lud16","picture","banner")    
-        for k in kset: 
+        kset = ("name","about","nip05","lud16","picture","banner")
+        for k in kset:
             if k in configProfile:
                 if k not in profileOnRelays:
-                    if len(configProfile[k]) > 0: 
+                    if len(configProfile[k]) > 0:
                         needsUpdated
                         break
-                elif configProfile[k] != profileOnRelays[k]: 
+                elif configProfile[k] != profileOnRelays[k]:
                     needsUpdated
                     break
-            elif k in profileOnRelays: 
+            elif k in profileOnRelays:
                 needsUpdated = True
                 break
     if needsUpdated: publishMainBotProfile()
@@ -836,7 +924,7 @@ def checkMainBotProfile():
 def makeProfileFromDict(profile, pubkey):
     j = {}
     kset = ("name","about","description","nip05","lud16","picture","banner")
-    for k in kset: 
+    for k in kset:
         if k in profile and len(profile[k]) > 0: j[k] = profile[k]
     if "description" in j and "about" not in j:
         j["about"] = j["description"]
@@ -949,7 +1037,7 @@ def handleEvent(npub, content):
             if float(eventBudget) > 0:
                 eventSpent = getEventSpentSoFar(npub, newEventId)
                 eventBalance = float(eventBudget) - float(eventSpent)
-                setNostrFieldForNpub(npub, "eventBalance", eventBalance) 
+                setNostrFieldForNpub(npub, "eventBalance", eventBalance)
                 setNostrFieldForNpub(npub, "eventBudgetWarningSent", None)
         # add to index
         addToNpubIndex(npub, newEventId)
@@ -1040,7 +1128,7 @@ def handleCredits(npub, content):
     currentInvoice["r_hash"] = newInvoice["r_hash"]
     currentInvoice["payment_request"] = payment_request
     currentInvoice["add_index"] = newInvoice["add_index"]
-    if "activeServer" in lnd.config: 
+    if "activeServer" in lnd.config:
         if lnd.config["activeServer"] is not None:
             currentInvoice["invoice_server"] = lnd.config["activeServer"]
     setNostrFieldForNpub(npub, "currentInvoice", currentInvoice)
@@ -1130,23 +1218,23 @@ def handleStatus(npub, content):
     if len(words) > 1:
         logger.warning(f"User {npub} called STATUS and provided arguments: {words[1:]}")
     npubConfig = getNpubConfigFile(npub)
-    if "relays" in npubConfig and not _singleRelayManager: 
+    if "relays" in npubConfig and not _singleRelayManager:
         relaysCount = len(npubConfig["relays"])
     else:
         relaysCount = len(config["relays"])
-    if helpMessage is None and relaysCount == 0 and not _singleRelayManager: 
+    if helpMessage is None and relaysCount == 0 and not _singleRelayManager:
         helpMessage = "Use RELAYS ADD command to configure relays"
     maxZap = 0
-    if "conditions" in npubConfig: 
+    if "conditions" in npubConfig:
         conditionsCount = len(npubConfig["conditions"])
         for condition in npubConfig["conditions"]:
-            if condition["amount"] > maxZap: 
+            if condition["amount"] > maxZap:
                 maxZap = condition["amount"]
     if helpMessage is None and conditionsCount == 0: helpMessage = "Use CONDITIONS ADD command to define a rule for zapping"
     eventId = None
     if "eventId" in npubConfig:
         eventId = npubConfig["eventId"]
-        if utils.isHex(eventId): 
+        if utils.isHex(eventId):
             eventIdHex = eventId
             eventIdbech32 = utils.hexToBech32(eventIdHex, "nevent")
         else:
@@ -1197,7 +1285,7 @@ def handleStats(npub, content):
     for ledgerEntry in ledgerLines:
         if "description" not in ledgerEntry: continue
         description = ledgerEntry["description"]
-        if description == "Carry over from ledger rotation": 
+        if description == "Carry over from ledger rotation":
             diso = ledgerEntry["created_at_iso"]
             continue
         if diso is None: ledgerEntry["created_at_iso"]
@@ -1211,7 +1299,7 @@ def handleStats(npub, content):
         vcredits = float(credits) + float((mcredits/1000))
         ledgerSummary[type]["qty"] = ledgerSummary[type]["qty"] + 1
         ledgerSummary[type]["value"] = ledgerSummary[type]["value"] + vcredits
-    if diso is None: 
+    if diso is None:
         message = "Stats not yet available"
     else:
         message = f"Stats since the last ledger rotation on {diso}"
@@ -1248,14 +1336,17 @@ def getEnabledBots():
     checkedNewEvent = False
     for botConfigFile in botConfigs:
         npub = botConfigFile.split(".")[0]
+        # Allow for disabling a bot by renaming the config
+        if not npub.startswith("npub"):
+            continue
         npub2 = PublicKey().from_npub(npub).bech32()
-        if npub != npub2: 
+        if npub != npub2:
             logger.warning(f"in getEnabledBots, {npub} does not match {npub2}")
             continue
         filename = f"{files.userConfigFolder}{botConfigFile}"
         botConfig = files.loadJsonFile(filename)
         if "enabled" not in botConfig: continue
-        if botConfig["enabled"]: 
+        if botConfig["enabled"]:
             if "eventAutoChange" in botConfig:
                 eacPhrase = botConfig["eventAutoChange"]
                 eventCreated = botConfig["eventCreated"] if "eventCreated" in botConfig else 0
@@ -1265,14 +1356,14 @@ def getEnabledBots():
                 if checkedNewEvent or currentTime > eventAutoChangeChecked + (1*60):
                     newEvent = getNewEventWithPhraseByNpub(npub, eacPhrase, eventCreated)
                     checkedNewEvent = True
-                    if newEvent is not None: 
+                    if newEvent is not None:
                         changeEvent = (newEvent.created_at > eventCreated)
                         newId = utils.normalizeToBech32(newEvent.id, "note")
                         eventCreated = newEvent.created_at
                         eventSince = eventCreated
-                        if "eventId" in botConfig: 
+                        if "eventId" in botConfig:
                             oldId = utils.normalizeToBech32(utils.normalizeToHex(botConfig["eventId"]),"note")
-                            if oldId == newId: 
+                            if oldId == newId:
                                 changeEvent = False
                             else:
                                 # finalized event reporting
@@ -1337,7 +1428,7 @@ def getEventByHex(npub, eventHex):
             events.append(event)
         else:
             _monitoredEventTmp.append(event)
-    _monitoredEvent = _monitoredEventTmp                
+    _monitoredEvent = _monitoredEventTmp
     if len(events) > 0: return events[0]
     return None
 
@@ -1346,11 +1437,18 @@ def getNewEventWithPhraseByNpub(npub, eacPhrase, currentCreated):
     authorhex = utils.normalizeToHex(npub)
     created_at = currentCreated
     newestEvent = None
-    events = getPubkeyEvents(authorhex)
+    logger.debug("- checking in npub's outbox")
+    events = getPubkeyEventsUsingOutbox(authorhex)
+    if len(events) == 0: 
+        logger.debug("- none found")
+        logger.debug("- checking with common botRelayManager")
+        events = getPubkeyEventsUsingBotRelayManager(authorhex)
+    logger.debug(f"- {len(events)} events found for review found")
     for event in events:
         if not isValidSignature(event): continue
         if event.created_at <= created_at: continue
         if str(eacPhrase).lower() in str(event.content).lower():
+            logger.debug(f"- new event found with id {event.id}")
             newestEvent = event
             created_at = event.created_at
     return newestEvent
@@ -1373,6 +1471,7 @@ _monitoredEvents = []
 _monitoredPubkeys = []
 _monitoredProfiles = []
 _monitoredEvent = []
+_monitoredRelayListMetadata = []
 # This proc must understand all subscriptions
 def siftMessagePool():
     global _directMessages
@@ -1380,6 +1479,7 @@ def siftMessagePool():
     global _monitoredPubkeys
     global _monitoredProfiles
     global _monitoredEvent
+    global _monitoredRelayListMetadata
     botPrivateKey = getBotPrivateKey()
     # AUTH
     authenticateRelays(botRelayManager, botPrivateKey)
@@ -1392,6 +1492,7 @@ def siftMessagePool():
         elif subid.startswith("my_pubkeys"): _monitoredPubkeys.append(event_msg.event)
         elif subid.startswith("my_profiles"): _monitoredProfiles.append(event_msg.event)
         elif subid.startswith("my_eventbyid"): _monitoredEvent.append(event_msg.event)
+        elif subid.startswith("pubkey_rlm_"): _monitoredRelayListMetadata.append(event_msg.event)
         else:
             u = event_msg.url
             c = event_msg.event.content
@@ -1429,7 +1530,7 @@ def getDirectMessages():
     for relayConfig in botRelayManager.relays.values():
         found = False
         for subId in relayConfig.subscriptions.keys():
-            if subId == subscription_dm: 
+            if subId == subscription_dm:
                 found = True
                 break
         if found: continue
@@ -1474,14 +1575,14 @@ def getEventReplies(eventHex):
         if relayConfig.url == "wss://nostr-01.yakihonne.com":
             logger.debug(f"Yakihonne relay config: {relayConfig.to_json_object()}")
         for subId in relayConfig.subscriptions.keys():
-            if subId == subscription_events: 
+            if subId == subscription_events:
                 found = True
                 break
-        if found: 
+        if found:
             hasEvent = False
             needToAdd = False
             filters_events = relayConfig.subscriptions[subscription_events].filters
-            if filters_events is None: 
+            if filters_events is None:
                 needToAdd = True
             elif len(filters_events) == 0:
                 needToAdd = True
@@ -1491,7 +1592,7 @@ def getEventReplies(eventHex):
                 hasEvent = True
                 break
             else:
-                filters_events[0].event_refs.append(eventHex)            
+                filters_events[0].event_refs.append(eventHex)
             if needToAdd:
                 if relayConfig.url == "wss://nostr-01.yakihonne.com":
                     logger.debug(f"Adding subscription {subscription_events} to {relayConfig.url}")
@@ -1548,7 +1649,94 @@ def getEventReplies(eventHex):
     _monitoredEvents = _monitoredEventsTmp
     return _replyEvents
 
-def getPubkeyEvents(pubkeyHex):
+# gets replies visible on the target npubs inbox
+def getEventRepliesToNpub(npub, eventHex):
+    _replyEvents = []
+    pubkey = PublicKey().from_npub(npub).hex()
+    pubkeyRelay = getInboxRelayManagerForPubkey(pubkey)
+    if pubkeyRelay is None: return _replyEvents
+    botPrivateKey = getBotPrivateKey()
+    t, _ = utils.getTimes()
+    subscription_events = f"my_events_{t}"
+    filtersince=t-86400
+    filters_events = Filters([Filter(event_refs=[eventHex],kinds=[EventKind.TEXT_NOTE],since=filtersince)])
+    pubkeyRelay.add_subscription(id=subscription_events, filters=filters_events)
+    request = [ClientMessageType.REQUEST, subscription_events]
+    request.extend(filters_events.to_json_array())
+    message = json.dumps(request)
+    pubkeyRelay.publish_message(message)
+    time.sleep(_relayPublishTime)
+    # Check if needed to authenticate and publish again if need be
+    if authenticateRelays(pubkeyRelay, botPrivateKey):
+        pubkeyRelay.publish_message(message)
+        time.sleep(_relayPublishTime)
+    _relayEvents = []
+    # EVENT
+    while pubkeyRelay.message_pool.has_events():
+        event_msg = pubkeyRelay.message_pool.get_event()
+        _relayEvents.append(event_msg.event)
+        pubkeyRelay.message_pool.events.task_done()
+    # NOTICES
+    while pubkeyRelay.message_pool.has_notices():
+        notice = pubkeyRelay.message_pool.get_notice()
+        message = f"RELAY NOTICE FROM {notice.url}: {notice.content}"
+        logger.info(message)
+        pubkeyRelay.message_pool.notices.task_done()    
+    removeSubscription(pubkeyRelay, subscription_events)
+    time.sleep(_relayPublishTime)
+    pubkeyRelay.close_connections()
+    for eventReply in _relayEvents:
+        addToReturnList = False
+        for tagItem in eventReply.tags:
+            if len(tagItem) < 2: continue # exclude tags without values
+            if tagItem[0] != 'e': continue # not event tag
+            if tagItem[1] != eventHex: # not a reply for event we want
+                if addToReturnList:
+                    addToReturnList = False # event tag multiple times, we only care about first level reply
+                    break
+                continue
+            addToReturnList = True
+        if addToReturnList:
+            _replyEvents.append(eventReply)
+    return _replyEvents
+
+def getPubkeyEventsUsingOutbox(pubkey):
+    _replyEvents = []
+    pubkeyRelay = getOutboxRelayManagerForPubkey(pubkey)
+    if pubkeyRelay is None: return _replyEvents
+    botPrivateKey = getBotPrivateKey()
+    t, _ = utils.getTimes()
+    subscription_events = f"my_events_{t}"
+    filtersince=t-86400
+    filters_events = Filters([Filter(authors=[pubkey],kinds=[EventKind.TEXT_NOTE],since=filtersince)])
+    pubkeyRelay.add_subscription(id=subscription_events, filters=filters_events)
+    request = [ClientMessageType.REQUEST, subscription_events]
+    request.extend(filters_events.to_json_array())
+    message = json.dumps(request)
+    pubkeyRelay.publish_message(message)
+    time.sleep(_relayPublishTime)
+    # Check if needed to authenticate and publish again if need be
+    if authenticateRelays(pubkeyRelay, botPrivateKey):
+        pubkeyRelay.publish_message(message)
+        time.sleep(_relayPublishTime)
+    _relayEvents = []
+    # EVENT
+    while pubkeyRelay.message_pool.has_events():
+        event_msg = pubkeyRelay.message_pool.get_event()
+        _replyEvents.append(event_msg.event)
+        pubkeyRelay.message_pool.events.task_done()
+    # NOTICES
+    while pubkeyRelay.message_pool.has_notices():
+        notice = pubkeyRelay.message_pool.get_notice()
+        message = f"RELAY NOTICE FROM {notice.url}: {notice.content}"
+        logger.info(message)
+        pubkeyRelay.message_pool.notices.task_done()    
+    removeSubscription(pubkeyRelay, subscription_events)
+    time.sleep(_relayPublishTime)
+    pubkeyRelay.close_connections()
+    return _replyEvents
+
+def getPubkeyEventsUsingBotRelayManager(pubkeyHex):
     global _monitoredPubkeys
     subscription_pubkeys = "my_pubkeys"
     newSubscriptionEachCall = True
@@ -1566,10 +1754,10 @@ def getPubkeyEvents(pubkeyHex):
     for relayConfig in botRelayManager.relays.values():
         found = False
         for subId in relayConfig.subscriptions.keys():
-            if subId == subscription_pubkeys: 
+            if subId == subscription_pubkeys:
                 found = True
                 break
-        if found: 
+        if found:
             hasPubkey = False
             filters_pubkeys = relayConfig.subscriptions[subscription_pubkeys].filters
             for filter in filters_pubkeys:
@@ -1613,9 +1801,9 @@ def getPubkeyEvents(pubkeyHex):
         if eventReply.public_key == pubkeyHex:
             addToReturnList = True
             removeFromMonitored = True
-        if addToReturnList: 
+        if addToReturnList:
             _replyEvents.append(eventReply)
-        elif not removeFromMonitored: 
+        elif not removeFromMonitored:
             _monitoredPubkeysTmp.append(eventReply)
     _monitoredPubkeys = _monitoredPubkeysTmp
     return _replyEvents
@@ -1639,6 +1827,7 @@ def getListFieldCount(list, fieldname, value=None):
 
 def processEvents(npub, responseEvents, botConfig):
     eventId = botConfig["eventId"]
+    eventIdhex = utils.normalizeToHex(eventId)
     pk = PrivateKey().from_nsec(botConfig["profile"]["nsec"])
     feesZapEvent = feesReplyMessage = 50
     fees = config["fees"] if "fees" in config else None
@@ -1649,7 +1838,7 @@ def processEvents(npub, responseEvents, botConfig):
     conditions = botConfig["conditions"] if "conditions" in botConfig else []
     excludes = botConfig["excludes"] if "excludes" in botConfig else []
     zapMessage = botConfig["zapMessage"] if "zapMessage" in botConfig else "Thank you!"
-    balance = ledger.getCreditBalance(npub)   
+    balance = ledger.getCreditBalance(npub)
     # load existing data
     basePath = f"{files.userEventsFolder}{npub}/{eventId}/"
     utils.makeFolderIfNotExists(basePath)
@@ -1671,7 +1860,7 @@ def processEvents(npub, responseEvents, botConfig):
     # event budget and balance
     eventbudget = botConfig["eventBudget"] if "eventBudget" in botConfig else 0
     if "eventBalance" in botConfig:
-        eventbalance = float(botConfig["eventBalance"]) 
+        eventbalance = float(botConfig["eventBalance"])
     else:
         if eventbudget > 0:
             eventbalance = float(eventbudget) - float(getEventSpentSoFar(npub, eventId))
@@ -1687,34 +1876,49 @@ def processEvents(npub, responseEvents, botConfig):
     eventsToReply = {}        # k = evt.id, v = public_key, message
     for evt in sortedEvents: #response in sortedEvents:
         #evt = Event(response)
-        if not isValidSignature(evt): 
+        if not isValidSignature(evt):
             logger.debug("- skipping response with invalid signature")
             continue
         created_at = evt.created_at
         pubkey = evt.public_key
         responseId = evt.id
         content = evt.content
-        if created_at > newest: newest = created_at
-        if getListFieldCount(evt.tags, 'e') != 1: 
-            logger.debug("- skipping response referencing more than this event")
-            continue # only process top level responses, not nested
-        if pubkey in excludes: 
+        if created_at > newest: newest = created_at    
+        eTagRoot = None
+        eTagReply = None
+        for tag in evt.tags:
+            if len(tag) == 0: continue
+            if tag[0] != "e": continue
+            if len(tag) > 3:
+                if tag[3] == "reply": eTagReply = tag[1]
+                if tag[3] == "root": eTagRoot = tag[1]
+        if eTagReply is not None and eTagReply != eventIdhex:
+            logger.debug(f"- skipping response where etag reply id ({eTagReply}) is not the same as event id being monitored")
+            continue
+        if eTagRoot is not None and eTagRoot != eventIdhex:
+            logger.debug(f"- skipping response where etag root id ({eTagRoot}) is not the same as event id being monitored")
+            continue
+        if eTagRoot is not None and eTagReply is not None:
+            if eTagRoot != eTagReply:
+                logger.debug(f"- skipping response where etag reply id ({eTagReply}) is not the same as etag root id ({eTagRoot})")
+                continue
+        if pubkey in excludes:
             logger.debug(f"- skipping pubkey {pubkey} in excludes list")
             continue
         if PublicKey(raw_bytes=bytes.fromhex(pubkey)).bech32() in excludes:
             logger.debug(f"- skipping pubkey {pubkey} in excludes list as bech32")
             continue
-        if responseId in responses: 
+        if responseId in responses:
             logger.debug(f"- skipping response previously handled")
             continue # handled previously, skip
         if pubkey not in participants: participants.append(pubkey)
         # check excludes against content
         excluded = False
         for exclude in excludes:
-            if str(exclude).lower() in str(content).lower(): 
+            if str(exclude).lower() in str(content).lower():
                 excluded = True
                 break
-        if excluded: 
+        if excluded:
             logger.debug(f"- skipping response content that should be excluded")
             logger.debug(f"{content}")
             continue
@@ -1741,7 +1945,7 @@ def processEvents(npub, responseEvents, botConfig):
                 if not re.search(pattern=requiredRegex, string=content, flags=re.IGNORECASE): continue
             if "randomWinnerLimit" in condition:
                 randomWinnerLimit = condition["randomWinnerLimit"]
-                if randomWinnerCount[conditionSlot] >= randomWinnerLimit: 
+                if randomWinnerCount[conditionSlot] >= randomWinnerLimit:
                     continue # hit threshold of this random payout
                 if pubkey in paidnpubs.keys():
                     continue # only unpaid users elligible for random win condition
@@ -1780,7 +1984,7 @@ def processEvents(npub, responseEvents, botConfig):
             for responseId2, zap2 in candidateEventsToZap.items():
                 if responseId2 == responseId1: continue
                 if zap2["public_key"] == zapPubkey:
-                    if zap2["amount"] > zapAmount: 
+                    if zap2["amount"] > zapAmount:
                         zapAmount = zap2["amount"]
                         zapRandomWinner = zap2["randomWinner"]
         eventsToZap[responseId1] = {"public_key": zapPubkey, "amount": zapAmount, "randomWinner": zapRandomWinner}
@@ -1792,13 +1996,13 @@ def processEvents(npub, responseEvents, botConfig):
         amountNeeded = (amount + lnd.config["feeLimit"])
         randomWinnerSlot = v["randomWinner"]
         # ensure adequate funds overall
-        if balance < amountNeeded: 
+        if balance < amountNeeded:
             if k in eventsToReply.keys(): del eventsToReply[k]
             logger.debug("Account balance too low to zap user")
             handleWarningLowBalance(npub, eventId, balance)
             continue
         # ensure adequate funds for event
-        if eventbudget > 0 and eventbalance < amountNeeded: 
+        if eventbudget > 0 and eventbalance < amountNeeded:
             if k in eventsToReply.keys(): del eventsToReply[k]
             logger.debug("Event Budget too low to zap user")
             handleWarningEventBudget(npub, eventId, eventbudget, eventbalance)
@@ -1807,7 +2011,7 @@ def processEvents(npub, responseEvents, botConfig):
         # get lightning id
         lightningId, name = getLightningIdForPubkey(pubkey)
         valid, message = isValidLightningId(lightningId)
-        if not valid: 
+        if not valid:
             logger.debug(f"{message} ({name} with pubkey: {pubkey})")
             replyMessage = f"Unable to zap: {message}"
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
@@ -1816,7 +2020,7 @@ def processEvents(npub, responseEvents, botConfig):
                 replies.append({"id":k,"pubkey":pubkey,"message":replyMessage})
                 files.saveJsonFile(fileReplies, replies)
             continue
-        if lightningId in paidluds.keys(): 
+        if lightningId in paidluds.keys():
             logger.debug(f"Lightning address {lightningId} was already paid for this event ({name} with pubkey: {pubkey})")
             continue
         # get callback info and invoice
@@ -1831,7 +2035,7 @@ def processEvents(npub, responseEvents, botConfig):
                 files.saveJsonFile(fileReplies, replies)
             continue
         callback, bech32lnurl, userMessage = validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, name, amount, pubkey)
-        if callback is None or bech32lnurl is None or userMessage is not None: 
+        if callback is None or bech32lnurl is None or userMessage is not None:
             replyMessage = userMessage
             if not isMessageInReplies(replies, k, pubkey, replyMessage):
                 newbalance = replyToEvent(npub, k, pk, pubkey, replyMessage, feesReplyMessage)
@@ -1855,8 +2059,8 @@ def processEvents(npub, responseEvents, botConfig):
         verifyUrl = invoice["verify"] if "verify" in invoice else None
         paymentRequest = invoice["pr"]
         decodedInvoice = lnd.decodeInvoice(paymentRequest)
-        lnd.recordPaymentDestination(decodedInvoice)
-        if not isValidInvoiceAmount(decodedInvoice, amount): 
+        if decodedInvoice is not None: lnd.recordPaymentDestination(decodedInvoice)
+        if not isValidInvoiceAmount(decodedInvoice, amount):
             logger.warning(f"LN Provider of identity {lightningId} return an unacceptable invoice. ({name} with pubkey: {pubkey})")
             logger.warning(f"{invoice}")
             replyMessage = f"Unable to zap: Provider for {lightningId} returned unacceptable invoice with different amount. Possible scam."
@@ -1892,12 +2096,12 @@ def processEvents(npub, responseEvents, botConfig):
     for k, v in eventsToReply.items():
         amountNeeded = (float(feesReplyMessage)/float(1000))
         # ensure adequate funds overall
-        if balance < amountNeeded: 
+        if balance < amountNeeded:
             logger.debug("Account balance to low to send reply")
             handleWarningLowBalance(npub, eventId, balance)
             break
         # ensure adequate funds for event
-        if eventbudget > 0 and eventbalance < amountNeeded: 
+        if eventbudget > 0 and eventbalance < amountNeeded:
             logger.debug("Event Budget too low to send reply")
             handleWarningEventBudget(npub, eventId, eventbudget, eventbalance)
             break
@@ -1930,7 +2134,7 @@ def replyToEvent(npub, eventHex, subbotPK, pubkey, replyMessage, feesReplyMessag
     isDebugMessage = str(replyMessage).startswith("Unable to zap")
     if not isDebugMessage or _replyDebugMessages:
         logger.debug(f"Replying to pubkey {pubkey}: {replyMessage}")
-        replyTags = [["e", eventHex]]
+        replyTags = [["e", eventHex, "", "reply"],["p", pubkey]]
         replyEvent = Event(content=replyMessage,tags=replyTags)
         subbotPK.sign_event(replyEvent)
         npubRelayManager = botRelayManager if _singleRelayManager else makeRelayManager(npub)
@@ -1938,6 +2142,12 @@ def replyToEvent(npub, eventHex, subbotPK, pubkey, replyMessage, feesReplyMessag
         time.sleep(_relayPublishTime)
         if not _singleRelayManager: npubRelayManager.close_connections()
         balance = ledger.recordEntry(npub, "REPLY MESSAGE", 0, -1 * feesReplyMessage, f"Send reply to {pubkey} for {eventHex}")
+        if _inboxoutbox:
+            pubkeyRelay = getInboxRelayManagerForPubkey(pubkey)
+            if pubkeyRelay is not None:
+                pubkeyRelay.publish_event(replyEvent)
+                time.sleep(_relayPublishTime)
+                pubkeyRelay.close_connections()
     elif isDebugMessage and _replyDebugReactions:
         reactionMessage = "⚠️"
         logger.debug(f"Debug Reaction to pubkey {pubkey}: {reactionMessage}")
@@ -1957,6 +2167,12 @@ def reactToEvent(npub, eventHex, subbotPK, pubkey, content):
     npubRelayManager.publish_event(reactEvent)
     time.sleep(_relayPublishTime)
     if not _singleRelayManager: npubRelayManager.close_connections()
+    if _inboxoutbox:
+        pubkeyRelay = getInboxRelayManagerForPubkey(pubkey)
+        if pubkeyRelay is not None:
+            pubkeyRelay.publish_event(reactEvent)
+            time.sleep(_relayPublishTime)
+            pubkeyRelay.close_connections()
 
 def handleWarningEventBudget(npub, eventId, eventbudget, eventbalance):
     ebws = getNostrFieldForNpub(npub, "eventBudgetWarningSent")
@@ -1965,7 +2181,7 @@ def handleWarningEventBudget(npub, eventId, eventbudget, eventbalance):
     message = f"{message}\nBudget set: {eventbudget}"
     message = f"{message}\nBalance remaining: {eventbalance}"
     message = f"{message}\nEvent: {eventId}"
-    message = f"{message}\nYou can change the budget with EVENTBUDGET command. Use BALANCE or STATUS to see account balance info."    
+    message = f"{message}\nYou can change the budget with EVENTBUDGET command. Use BALANCE or STATUS to see account balance info."
     sendDirectMessage(npub, message)
     setNostrFieldForNpub(npub, "eventBudgetWarningSent", True)
 
@@ -2020,11 +2236,11 @@ def getLightningIdForPubkey(public_key):
         if type(v) is not dict: continue
         if "lightningId" not in v: continue
         if "created_at" not in v: continue
-        if v["created_at"] > t - 86400: 
+        if v["created_at"] > t - 86400:
             lightningId = v["lightningId"]
-            if str(lightningId).lower().startswith("lnurl"): 
+            if str(lightningId).lower().startswith("lnurl"):
                 lightningId = makeLightningIdFromLNURL(lightningId)
-            if lightningId is not None: 
+            if lightningId is not None:
                 name = v["name"] if ("name" in v and v["name"] is not None) else "no name"
                 return lightningId, name
     # get profile from relays
@@ -2039,10 +2255,10 @@ def getLightningIdForPubkey(public_key):
                 lightningIdCache[public_key] = {
                     "lightningId": lightningId, "name":name, "created_at": t
                     }
-    if "lud16" in profile and profile["lud16"] is not None: 
+    if "lud16" in profile and profile["lud16"] is not None:
         lightningId = profile["lud16"]
         name = profile["name"] if ("name" in profile and profile["name"] is not None) else "no name"
-        if str(lightningId).lower().startswith("lnurl"): 
+        if str(lightningId).lower().startswith("lnurl"):
             lightningId = makeLightningIdFromLNURL(lightningId)
         lightningIdCache[public_key] = {
             "lightningId": lightningId, "name":name, "created_at": t
@@ -2054,7 +2270,7 @@ def isValidLightningId(lightningId):
     if lightningId is None:
         return False, f"No lightning address"
     identityParts = lightningId.split("@")
-    if len(identityParts) != 2: 
+    if len(identityParts) != 2:
         return False, f"Lightning address {lightningId} is invalid - not in username@domain format"
     return True, None
 
@@ -2080,7 +2296,7 @@ def validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, name, amount, pubkey
         return callback, bech32lnurl, userMessage
     if "nostrPubkey" not in lnurlPayInfo:
         logger.warning(f"LN Provider of identity {lightningId} does not have nostrPubkey. Publisher of receipt could be anyone")
-    if not all(k in lnurlPayInfo for k in ("callback","minSendable","maxSendable")): 
+    if not all(k in lnurlPayInfo for k in ("callback","minSendable","maxSendable")):
         logger.debug(f"LN Provider of identity {lightningId} does not have proper callback, minSendable, or maxSendable info. Zap not supported")
         userMessage = f"Unable to zap: Provider for {lightningId} does not provide expected response format"
         return callback, bech32lnurl, userMessage
@@ -2109,9 +2325,9 @@ def validateLNURLPayInfo(lnurlPayInfo, lnurlp, lightningId, name, amount, pubkey
     return callback, bech32lnurl, userMessage
 
 def makeZapRequest(npub, botConfig, amountToZap, zapMessage, recipientPubkey, eventId, bech32lnurl):
-    pk = PrivateKey().from_nsec(botConfig["profile"]["nsec"])    
+    pk = PrivateKey().from_nsec(botConfig["profile"]["nsec"])
     amountMillisatoshi = amountToZap*1000
-    zapTags = []    
+    zapTags = []
     relaysTagList = []
     relaysTagList.append("relays")
     botrelays = getNostrRelaysForNpub(npub, botConfig)
@@ -2138,7 +2354,10 @@ def makeZapRequest(npub, botConfig, amountToZap, zapMessage, recipientPubkey, ev
 def isValidInvoiceAmount(decodedInvoice, amountToZap):
     logger.debug(f"Checking if invoice is valid")
     amountMillisatoshi = amountToZap*1000
-    if not all(k in decodedInvoice for k in ("num_satoshis","num_msat")): 
+    if decodedInvoice is None:
+        logger.warning(f"Invoice not available")
+        return False
+    if not all(k in decodedInvoice for k in ("num_satoshis","num_msat")):
         logger.warning(f"Invoice did not set amount")
         return False
     num_satoshis = int(decodedInvoice["num_satoshis"])
@@ -2149,7 +2368,6 @@ def isValidInvoiceAmount(decodedInvoice, amountToZap):
     if num_msat != amountMillisatoshi:
         logger.warning(f"Invoice amount of msats ({num_msat}) does not match requested amount ({amountMillisatoshi}) to zap")
         return False
-    
     return True
 
 def processOutstandingPayments(npub, botConfig):

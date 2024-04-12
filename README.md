@@ -18,6 +18,7 @@ This project was prepared to support the #InkblotArt project by [Rex Damascus](h
 | [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) | Reactions |
 | [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) | Client Authentication |
 | [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Lightning Zaps |
+| [NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) | Relay List Metadata |
 
 ---
 
@@ -30,6 +31,7 @@ This project was prepared to support the #InkblotArt project by [Rex Damascus](h
 | 4 | Encrypted Direct Messages |
 | 7 | Reaction |
 | 9734 | Zap Request |
+| 10002 | Relay List Metadata |
 | 22242 | Client Authentication |
 
 ---
