@@ -19,8 +19,20 @@ def getEventsForNpub(npub):
     return os.listdir(path)
 
 def makeAllReports():
+    # Get configs, only process reports for those with proper names
+    # This supports disabling a config or report by prefixing the filename
+    botConfigs = files.listUserConfigs()
+    validNpubs = []    
+    for botConfigFile in botConfigs:
+        npub = botConfigFile.split(".")[0]
+        if not npub.startswith("npub"):
+            continue
+        if npub not in validNpubs:
+            validNpubs.append(npub)
     npubs = getNpubsWithEvents()
     for npub in npubs:
+        if npub not in validNpubs:
+            continue
         makeLedgerReport(npub)
         events = getEventsForNpub(npub)
         for eventId in events:

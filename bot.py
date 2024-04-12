@@ -32,7 +32,11 @@ def processBots():
         # get any new replies seen on relays
         responseEvents = nostr.getEventReplies(eventHex)
         newEventsCount = len(responseEvents)
-        logger.debug(f"Found {newEventsCount} replies to {eventHex}")
+        logger.debug(f"Found {newEventsCount} replies to {eventHex} via common botRelayManager")
+        if (newEventsCount == 0):
+            responseEvents = nostr.getEventRepliesToNpub(npub, eventHex)
+            newEventsCount = len(responseEvents)
+            logger.debug(f"Found {newEventsCount} replies to {eventHex} via inbox for {npub}")
 
         # process em!
         newsince = nostr.processEvents(npub, responseEvents, botConfig)
@@ -130,6 +134,8 @@ if __name__ == '__main__':
 
     lastRelayReconnectTime = startTime
     relayReconnectInterval = (30 * 60)
+    botProcessTime = startTime
+    botProcessInterval = (2 * 60)
 
     # Bot loop
     while True:
@@ -139,7 +145,9 @@ if __name__ == '__main__':
         lnd.checkInvoices()
 
         # process the next enabled bot
-        processBots()
+        if botProcessTime + botProcessInterval < loopStartTime:
+            processBots()
+            botProcessTime, _ = utils.getTimes()
 
         # look for command and control messages
         newMessages = nostr.checkDirectMessages()
