@@ -858,6 +858,27 @@ def makeRelayManager(npub):
 def getProfile(pubkeyHex):
     global _monitoredProfiles
     logger.debug(f"Getting profile information for {pubkeyHex}")
+    profileToUse = None
+    profileToReturn = None
+    t, _ = utils.getTimes()
+    created_at = 0
+    # Check current monitored profiles
+    for profile in _monitoredProfiles:
+        if profile.public_key != pubkeyHex: continue
+        if profile.created_at <= created_at: continue
+        if profile.created_at < t - 43200: continue	# 12 hour cache
+        if not isValidSignature(profile): continue
+        try:
+            ec = json.loads(profile.content)
+            created_at = profile.created_at
+            profileToUse = profile
+            profileToReturn = dict(ec)
+            return profileToReturn, created_at
+        except Exception as err:
+            logger.warning(f"Error while reading profile from cache for {pubkeyHex}")
+            logger.exception(err)
+            continue
+    # Check on relays
     filters = Filters([Filter(kinds=[EventKind.SET_METADATA],authors=[pubkeyHex])])
     botPrivateKey = getBotPrivateKey()
     t, _ = utils.getTimes()
@@ -877,9 +898,6 @@ def getProfile(pubkeyHex):
     # Remove this subscription
     removeSubscription(botRelayManager, subscription_id)
     # Find the profile
-    profileToUse = None
-    profileToReturn = None
-    created_at = 0
     _monitoredProfilesTmp = []
     for profile in _monitoredProfiles:
         if profile.public_key != pubkeyHex:
@@ -894,7 +912,7 @@ def getProfile(pubkeyHex):
             profileToReturn = dict(ec)
         except Exception as err:
             logger.warning(f"Error while getting profile for {pubkeyHex}")
-            logger.eception(err)
+            logger.warning(err)
             continue
     if profileToUse is not None: _monitoredProfilesTmp.append(profileToUse)
     _monitoredProfiles = _monitoredProfilesTmp
@@ -1912,8 +1930,57 @@ def processEvents(npub, responseEvents, botConfig):
             logger.debug(f"- skipping response previously handled")
             continue # handled previously, skip
         if pubkey not in participants: participants.append(pubkey)
-        # check excludes against content
+        # initialize exclude for this user
         excluded = False
+        userProfile, profile_created_at = getProfile(pubkey)
+        # exclusions based on profile state
+        if userProfile is None:
+            excluded = True
+            logger.debug(f"- skipping response from user where no profile was found")
+            continue
+        # check if nip05 domain excluded
+        userNip05 = userProfile["nip05"]
+        if userNip05 is not None:
+            userNip05Parts = userNip05.split("@")
+            if len(userNip05Parts) != 2:
+                excluded = True
+                logger.debug(f"- skipping response from user who has malformed nip05: {userNip05}")
+                continue
+            userNip05Domain = userNip05Parts[1]
+            for exclude in excludes:
+                if str(exclude).lower() in str(userNip05Domain).lower():
+                    excluded = True
+                    break
+            if excluded:
+                logger.debug(f"- skipping response from user with nip05 from excluded domain: {userNip05Domain}")
+                continue
+        # check if lightning address excluded
+        userLightning = userProfile["lud16"]
+        if userLightning is not None:
+            userLightningParts = userLightning.split("@")
+            if len(userLightningParts) != 2:
+                excluded = True
+                logger.debug(f"- skipping response from user who has malformed lud16: {userLightning}")
+                continue
+            userLightningDomain = userLightningParts[1]
+            for exclude in excludes:
+                if str(exclude).lower() in str(userLightningDomain).lower():
+                    excluded = True
+                    break
+            if excluded:
+                logger.debug(f"- skipping response from user with lud16 from excluded domain: {userLightningDomain}")
+                continue
+        # check if picture references exclusion
+        userPicture = userProfile["picture"]
+        if userPicture is not None:
+            for exclude in excludes:
+                if str(exclude).lower() in str(userPicture).lower():
+                    excluded = True
+                    break
+            if excluded:
+                logger.debug(f"- skipping response from user with picture on exclusion list: {userPicture}")
+                continue
+        # check excludes against content
         for exclude in excludes:
             if str(exclude).lower() in str(content).lower():
                 excluded = True
